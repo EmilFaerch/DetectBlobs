@@ -30,7 +30,7 @@ Mat p2_sq1 = imread("p2_sq1.PNG", 0);
 Mat p2_sq2 = imread("p2_sq2.PNG", 0);
 
 double team1_minMatchValue = 0.75;
-double team2_minMatchValue = 0.62;
+double team2_minMatchValue = 0.7;
 double bestMatch = 0;
 
 recursive_mutex mtx, mtxloop;
@@ -85,19 +85,20 @@ void takeBackground(){
 	cvtColor(input, input, CV_RGB2GRAY);
 
 //	increaseContrast(background, 10);
-	GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
-	medianBlur(background, background, 5);
+//	GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
+//	medianBlur(background, background, 5);
 
 //	increaseContrast(input, 10);
-	GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
-	medianBlur(input, input, 5);
+//	GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
+//	medianBlur(input, input, 5);
 
 	input = input - background; 
 
-	increaseContrast(input, 10);
-	GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
+//	increaseContrast(input, 10);
+//	GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
 
-	makeBinary(input, 17);
+//	makeBinary(input, 17);
+	threshold(input, input, 15, 255, THRESH_OTSU);
 
 	GaussianBlur(p1_ship, p1_ship, Size(3, 3), 1.5, 1.5); GaussianBlur(p2_ship, p2_ship, Size(3, 3), 1.5, 1.5);
 	GaussianBlur(p1_sq1, p1_sq1, Size(3, 3), 1.5, 1.5); GaussianBlur(p2_sq1, p2_sq1, Size(3, 3), 1.5, 1.5);
@@ -121,7 +122,7 @@ void findObject(Mat objTemplate, string name, double rotation, int team){
 		warpAffine(temp, temp, rot, temp.size());
 	}
 
-	matchTemplate(input, temp, result, 5);
+	matchTemplate(input, temp, result, CV_TM_CCORR_NORMED);
 
 	double minVal; double maxVal; Point minLoc; Point maxLoc; Point matchLoc;
 

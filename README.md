@@ -1,3 +1,0 @@
-# DetectBlobs
-
-Pis lort
