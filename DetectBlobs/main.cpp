@@ -1,8 +1,11 @@
-#include "opencv2/opencv.hpp"
 #include <Windows.h>
-#include <iostream>
 #include <thread>
+#include <iostream>
 #include <SFML\Network.hpp>
+#include <SFML\Window.hpp>
+#include <SFML\System.hpp>
+#include <opencv2\opencv.hpp>
+#include <opencv2\core.hpp>
 
 using namespace cv;
 using namespace std;
@@ -11,9 +14,17 @@ using namespace std;
 // Initializing and Processing ------
 Mat desktopCapture(Mat input);
 void takeBackground();
-void findContours(string subject);
-void clientOutput();
+void findObjects(string subject);
+void clientConnect();
+void clientSendInfo(int PositionX, int PositionY, string object);
 void showOutputLoop(); // -----------
+
+/* NETWORKING */
+sf::IpAddress myIP = sf::IpAddress::getLocalAddress();
+sf::TcpSocket someSocket;
+int port = 5000;
+
+thread t1, t2, t3, t4, t5, t6;
 
 // Find objects (Ships/Squadrons) 
 //void findObject(Mat objTemplate, string name, double rotation, int team);
@@ -49,19 +60,12 @@ int main(int, char)
 	input = imread("input image.PNG", 0);
 	output = Mat::zeros(input.rows, input.cols, CV_8UC1);
 	thread threadOutput(showOutputLoop);
+	thread serverConnection(clientConnect);
 
-	// -v- Uncomment -----^ testing purposes
+// -v- Uncomment -----^ testing purposes
 	//Sleep(2000);
 	//takeBackground();
 	//thread threadOutput(showOutputLoop);
-
-	findContours("regular - light: ");
-
-	input = imread("input image rotated.PNG", 0);
-
-	findContours("rotated - dark: ");
-
-	clientOutput();
 
 /*
 	cout << "Looking for P1 Ship" << endl;
@@ -79,7 +83,7 @@ int main(int, char)
 	thread p2_sq2(findObject, p2_sq2, "P2 SQ2", 0, 2);
 */
 
-//	waitKey(0); // Needed for when we're multithreading
+	waitKey(0); // Needed for when we're multithreading
 
 /*
 	p1_ship.join();
@@ -91,6 +95,7 @@ int main(int, char)
 	p2_sq2.join();
 	*/
 
+	serverConnection.join();
 	threadOutput.join();
 
 	return 0;
@@ -126,14 +131,16 @@ void takeBackground(){
 	input.copyTo(output);
 }
 
-void findContours(string subject){
+void findObjects(string subject){
+
+	cout << subject << endl;
+
 	/// Find contours
 	vector<vector<Point> > contours;
 	vector<Vec4i> hierarchy;
 	findContours(input, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
 	vector<Rect> boundRect(contours.size());
 
-	cout << subject << endl;
 	for (int i = 0; i < contours.size(); i++){
 		boundRect[i] = boundingRect(Mat(contours[i]));
 		int area = contourArea(contours[i]);
@@ -145,29 +152,108 @@ void findContours(string subject){
 		drawContours(output, contours, i, Scalar::all(255));
 		rectangle(output, boundRect[i].tl(), boundRect[i].br(), Scalar::all(200), 2, 8, 0);
 
+		// P1 OBJECTS
 		if (area > p1_shipAmin && area < p1_shipAmax){
 			putText(output, "P1 Ship", center, 1, 1, Scalar::all(200));
+			t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship");
+			
+			//clientSendInfo(center.x, center.y, "P1_Ship");
 		}
 		else if (area > p1_sq1Amin && area < p1_sq1Amax){
 			putText(output, "P1 SQ1", center, 1, 1, Scalar::all(200));
+			t2 = thread(clientSendInfo, center.x, center.y, "P1_SQ1");
+			//clientSendInfo(center.x, center.y, "P1_SQ1");
 		}
 		else if (area > p1_sq2Amin && area < p1_sq2Amax){
 			putText(output, "P1 SQ2", center, 1, 1, Scalar::all(200));
-		}
-
+			 t3 = thread(clientSendInfo, center.x, center.y, "P1_SQ2");
+			//clientSendInfo(center.x, center.y, "P1_SQ2");
+		} 
+		// P2 OBJECTS
 		else if (area > p2_shipAmin && area < p2_shipAmax){
 			putText(output, "P2 Ship", center, 1, 1, Scalar::all(200));
+			 t4 = thread(clientSendInfo, center.x, center.y, "P2_Ship");
+			//clientSendInfo(center.x, center.y, "P2_Ship");
 		}
 		else if (area > p2_sq1Amin && area < p2_sq1Amax){
 			putText(output, "P2 SQ1", center, 1, 1, Scalar::all(200));
+			 t5 = thread(clientSendInfo, center.x, center.y, "P2_SQ1");
+			//clientSendInfo(center.x, center.y, "P2_SQ1");
 		}
 		else if (area > p2_sq2Amin && area < p2_sq2Amax){
 			putText(output, "P2 SQ2", center, 1, 1, Scalar::all(200));
+			 t6 = thread(clientSendInfo, center.x, center.y, "P2_SQ2");
+			//clientSendInfo(center.x, center.y, "P2_SQ2");
 		}
 		else{
 			cout << "Unidentified object at " << boundRect[i].x + (boundRect[i].width / 2) << ", " << boundRect[i].y + (boundRect[i].height / 2) << " - Area: " << area << endl;
 			putText(output, "Unidentified", center, 1, 1, Scalar::all(200));
 		}
+		Sleep(50);
+	}
+	t1.join();
+	t2.join();
+	t3.join();
+	t4.join();
+	t5.join();
+	t6.join();
+
+	if (subject == "Server request"){
+		cout << "Request done!" << endl;
+		clientSendInfo(0, 0, "Request done!");
+	}
+}
+
+void clientConnect(){
+	char buffer[2000];
+	someSocket.connect(myIP, port);
+	std::size_t received;
+
+	string text = "Hello there server! I'm the client!";
+	string input;
+
+	someSocket.setBlocking(false);
+
+	if (someSocket.getRemoteAddress() != "None"){ 
+		cout << "Me: Connected to server! ( "<< someSocket.getRemoteAddress() <<" - " << someSocket.getRemotePort() << " )" << endl;
+		someSocket.send(text.c_str(), text.length() + 1); 
+	}
+	else{
+		cout << "Run the server first! (Did not find host)\nRun the server and type 'ok' to try again, or anything else to stop: ";
+		cin >> input;
+		if (input == "ok") clientConnect();
+		else exit(0);
+	}
+
+	while (true){
+		someSocket.receive(buffer, sizeof(buffer), received);
+
+		if (received > 0){
+			string msg = buffer;
+
+			if (msg == "Update!") findObjects("Server request");
+			else cout << "Server: " << msg << endl;
+			received = 0;
+		}
+	}
+}
+
+void clientSendInfo(int PositionX, int PositionY, string object) {
+	string text = "Hello!";
+
+	string posX = to_string(PositionX);
+	string posY = to_string(PositionY);
+	
+	someSocket.connect(myIP, port);
+	someSocket.setBlocking(false);
+
+	if (someSocket.getRemoteAddress() != "None"){
+		 text = (object + " " + posX + " " + posY);
+		someSocket.send(text.c_str(), text.length() + 1);
+	}
+	else
+	{
+		cout << "Couldn't send message to server: " << someSocket.getRemoteAddress() << " - " << someSocket.getRemotePort() << "." << endl;
 	}
 }
 
@@ -298,53 +384,3 @@ Mat desktopCapture(Mat input)
 	return src;
 }
 
-void clientOutput() {
-
-	int PositionX = 5;
-	int PositionY = 10;
-	int prevPostionX, prevPostionY;
-
-	string posX = std::to_string(PositionX);
-	string posY = std::to_string(PositionY);
-	string space = " ";
-
-
-	char buffer[2000];
-	sf::IpAddress myIP = sf::IpAddress::getLocalAddress();
-	sf::TcpSocket socket;
-	cout << myIP << endl;
-	std::string text = "connected to client";
-	socket.connect(myIP, 5000);
-	std::size_t received;
-
-	sf::Packet packet;
-
-	socket.setBlocking(false);
-
-	while (1) {
-
-		prevPostionX = PositionX;
-		prevPostionY = PositionY;
-
-		string open = posX + space + posY;
-
-		try{
-		packet << open;
-		socket.send(packet);
-
-		if (prevPostionX != PositionX && prevPostionY != PositionY) {}
-
-			socket.receive(packet);
-
-			socket.send(text.c_str(), text.length() + 1);
-			socket.receive(buffer, sizeof(buffer), received);
-			std::cout << buffer << std::endl;
-		}
-		catch (exception e)
-		{}
-
-
-
-	}
-	system("pause");
-}
