@@ -1,22 +1,23 @@
 #include "opencv2/opencv.hpp"
 #include <Windows.h>
-#include <iostream><
+#include <iostream>
 #include <thread>
-#include <mutex>
+#include <SFML\Network.hpp>
 
 using namespace cv;
 using namespace std;
 
 /* Function Headers */
-// Initializing and Processing ----------------------
+// Initializing and Processing ------
 Mat desktopCapture(Mat input);
 void takeBackground();
-void increaseContrast(Mat temp, int amount);
-void makeBinary(Mat temp, int threshold);
-void showOutputLoop();
-// Find objects (Ships/Squadrons) -------------
-void findObject(Mat objTemplate, string name, double rotation, int team);
-void findAllOnce();
+void findContours(string subject);
+void clientOutput();
+void showOutputLoop(); // -----------
+
+// Find objects (Ships/Squadrons) 
+//void findObject(Mat objTemplate, string name, double rotation, int team);
+//void findAllOnce();
 
 
 /* References */
@@ -35,15 +36,17 @@ double team2_minMatchValue = 0.7;
 double bestMatch = 0;
 --------------------------------------- */
 
-double p1_shipA, p1_sq1A, p1_sq2a;
-double p2_shipA, p2_sq1A, p2_sq2a;
+double p1_shipAmin = 5900, p1_shipAmax = 6200;
+double p1_sq1Amin = 950, p1_sq1Amax = 1050;
+double p1_sq2Amin = 620, p1_sq2Amax = 650;
 
-vector<vector<Point> > contours;
-vector<Vec4i> hierarchy;
+double p2_shipAmin = 4250, p2_shipAmax = 4370;
+double p2_sq1Amin = 400, p2_sq1Amax = 500;
+double p2_sq2Amin = 130, p2_sq2Amax = 190;
 
 int main(int, char)
 {
-	input = imread("input image rotated.PNG", 0);
+	input = imread("input image.PNG", 0);
 	output = Mat::zeros(input.rows, input.cols, CV_8UC1);
 	thread threadOutput(showOutputLoop);
 
@@ -52,18 +55,13 @@ int main(int, char)
 	//takeBackground();
 	//thread threadOutput(showOutputLoop);
 
-	/// Find contours
-	findContours(input, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
-	vector<Rect> boundRect(contours.size());
+	findContours("regular - light: ");
 
-	for (int i = 0; i < contours.size(); i++){
-		boundRect[i] = boundingRect(Mat(contours[i]));
-		drawContours(output, contours, i, Scalar::all(255));
-		rectangle(output, boundRect[i].tl(), boundRect[i].br(), Scalar::all(100), 2, 8, 0);
+	input = imread("input image rotated.PNG", 0);
 
-		double area = contourArea(contours[i]);
-		cout << "x, y: " << boundRect[i].x + (boundRect[i].width / 2) << ", " << boundRect[i].y + (boundRect[i].height / 2) << " - Area: " << area << endl;
-	}
+	findContours("rotated - dark: ");
+
+	clientOutput();
 
 /*
 	cout << "Looking for P1 Ship" << endl;
@@ -81,7 +79,7 @@ int main(int, char)
 	thread p2_sq2(findObject, p2_sq2, "P2 SQ2", 0, 2);
 */
 
-	waitKey(0);
+//	waitKey(0); // Needed for when we're multithreading
 
 /*
 	p1_ship.join();
@@ -126,6 +124,51 @@ void takeBackground(){
 	//GaussianBlur(p1_sq2, p1_sq2, Size(3, 3), 1.5, 1.5); GaussianBlur(p2_sq2, p2_sq2, Size(3, 3), 1.5, 1.5);
 
 	input.copyTo(output);
+}
+
+void findContours(string subject){
+	/// Find contours
+	vector<vector<Point> > contours;
+	vector<Vec4i> hierarchy;
+	findContours(input, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+	vector<Rect> boundRect(contours.size());
+
+	cout << subject << endl;
+	for (int i = 0; i < contours.size(); i++){
+		boundRect[i] = boundingRect(Mat(contours[i]));
+		int area = contourArea(contours[i]);
+
+		Point center;
+		center.x = int(boundRect[i].x);
+		center.y = int(boundRect[i].y) - 5;
+
+		drawContours(output, contours, i, Scalar::all(255));
+		rectangle(output, boundRect[i].tl(), boundRect[i].br(), Scalar::all(200), 2, 8, 0);
+
+		if (area > p1_shipAmin && area < p1_shipAmax){
+			putText(output, "P1 Ship", center, 1, 1, Scalar::all(200));
+		}
+		else if (area > p1_sq1Amin && area < p1_sq1Amax){
+			putText(output, "P1 SQ1", center, 1, 1, Scalar::all(200));
+		}
+		else if (area > p1_sq2Amin && area < p1_sq2Amax){
+			putText(output, "P1 SQ2", center, 1, 1, Scalar::all(200));
+		}
+
+		else if (area > p2_shipAmin && area < p2_shipAmax){
+			putText(output, "P2 Ship", center, 1, 1, Scalar::all(200));
+		}
+		else if (area > p2_sq1Amin && area < p2_sq1Amax){
+			putText(output, "P2 SQ1", center, 1, 1, Scalar::all(200));
+		}
+		else if (area > p2_sq2Amin && area < p2_sq2Amax){
+			putText(output, "P2 SQ2", center, 1, 1, Scalar::all(200));
+		}
+		else{
+			cout << "Unidentified object at " << boundRect[i].x + (boundRect[i].width / 2) << ", " << boundRect[i].y + (boundRect[i].height / 2) << " - Area: " << area << endl;
+			putText(output, "Unidentified", center, 1, 1, Scalar::all(200));
+		}
+	}
 }
 
 // For template matching; not used anymore
@@ -253,4 +296,55 @@ Mat desktopCapture(Mat input)
 	ReleaseDC(desktop, hwindowDC);
 
 	return src;
+}
+
+void clientOutput() {
+
+	int PositionX = 5;
+	int PositionY = 10;
+	int prevPostionX, prevPostionY;
+
+	string posX = std::to_string(PositionX);
+	string posY = std::to_string(PositionY);
+	string space = " ";
+
+
+	char buffer[2000];
+	sf::IpAddress myIP = sf::IpAddress::getLocalAddress();
+	sf::TcpSocket socket;
+	cout << myIP << endl;
+	std::string text = "connected to client";
+	socket.connect(myIP, 5000);
+	std::size_t received;
+
+	sf::Packet packet;
+
+	socket.setBlocking(false);
+
+	while (1) {
+
+		prevPostionX = PositionX;
+		prevPostionY = PositionY;
+
+		string open = posX + space + posY;
+
+		try{
+		packet << open;
+		socket.send(packet);
+
+		if (prevPostionX != PositionX && prevPostionY != PositionY) {}
+
+			socket.receive(packet);
+
+			socket.send(text.c_str(), text.length() + 1);
+			socket.receive(buffer, sizeof(buffer), received);
+			std::cout << buffer << std::endl;
+		}
+		catch (exception e)
+		{}
+
+
+
+	}
+	system("pause");
 }
