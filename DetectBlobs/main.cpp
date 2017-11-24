@@ -6,6 +6,7 @@
 #include <SFML\System.hpp>
 #include <opencv2\opencv.hpp>
 #include <opencv2\core.hpp>
+#include <math.h>
 
 using namespace cv;
 using namespace std;
@@ -16,9 +17,9 @@ Mat desktopCapture(Mat input);
 void takeBackground();
 void updateInput();
 void findObjects(string subject);
-void clientConnect();
+float findRotation(int Frontx, int Fronty, int Originx, int Originy);
 void startServer();
-void clientSendInfo(int PositionX, int PositionY, string object);
+void clientSendInfo(int PositionX, int PositionY, string object, int rotation);
 void showOutputLoop(); // -----------
 
 /* NETWORKING */
@@ -28,7 +29,10 @@ sf::TcpListener listener;
 sf::TcpSocket someSocket;
 bool listening = true, connected = false;
 
+// Threads for sending Ship info to client
 thread t1, t2, t3, t4, t5, t6;
+// Threads for finding Ship direction coordinates
+thread st1, st2;
 
 /* References */
 Mat input, background, output;
@@ -56,19 +60,21 @@ double p2_sq2Amin = 130, p2_sq2Amax = 190;
 
 int main(int, char)
 {
-	 Sleep(2000);
-	 takeBackground();
+	// Sleep(2000);
+	// takeBackground();
 
 	/* ---------------- TESTING PURPOSES ---------------- */
 	input = imread("input image.PNG", 0);
-	output = Mat::zeros(background.rows, background.cols, CV_8UC1);
+	input.copyTo(output);
+	// output = Mat::zeros(background.rows, background.cols, CV_8UC1);
 	/* ---------------- TESTING PURPOSES ---------------- */
 
 	thread threadOutput(showOutputLoop);
 	//thread updateImage(updateInput);
-	thread serverConnection(startServer);
 
-	cout << input.rows << ", " << input.cols << endl;
+	cout << "Input pic dimensions: " << input.rows << ", " << input.cols << endl;
+
+	thread serverConnection(startServer);
 
 	waitKey(0); // Needed for multithreading, so the program doesn't close / crash
 
@@ -116,25 +122,27 @@ void findObjects(string subject){
 
 	if (subject == "Server request"){
 		cout << "Request start!" << endl;
-		clientSendInfo(0, 0, "Request start");
+		clientSendInfo(0, 0, "Request start", 0);
 	}
 
 	bool usingT1 = false, usingT2 = false, usingT3 = false, usingT4 = false, usingT5 = false, usingT6 = false;
 
-	/// Find contours
-	vector<vector<Point> > contours;
-	vector<Vec4i> hierarchy;
-	findContours(input, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
-	vector<Rect> boundRect(contours.size());
-
 	try{
+		/// Find contours
+		vector<vector<Point> > contours;
+		vector<Vec4i> hierarchy;
+		findContours(input, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+		vector<Rect> boundRect(contours.size());
+
 		for (int i = 0; i < contours.size(); i++){
 			boundRect[i] = boundingRect(Mat(contours[i]));
 			int area = contourArea(contours[i]);
 
+			if (area < 130) return;
+
 			Point center;
-			center.x = int(boundRect[i].x);
-			center.y = int(boundRect[i].y) - 5;
+			center.x = boundRect[i].x + (boundRect[i].width / 2);
+			center.y = boundRect[i].y + (boundRect[i].height / 2);
 
 			drawContours(output, contours, i, Scalar::all(255));
 			rectangle(output, boundRect[i].tl(), boundRect[i].br(), Scalar::all(200), 2, 8, 0);
@@ -142,39 +150,86 @@ void findObjects(string subject){
 			// P1 OBJECTS
 			if (area > p1_shipAmin && area < p1_shipAmax){
 				putText(output, "P1 Ship", center, 1, 1, Scalar::all(200));
-				t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship");
-				usingT1 = true;
-				//clientSendInfo(center.x, center.y, "P1_Ship");
+
+				Mat temp = Mat::zeros(boundRect[i].height, boundRect[i].width, CV_8UC1);
+
+				for (int y = boundRect[i].y; y < boundRect[i].y + boundRect[i].height; y++){
+					for (int x = boundRect[i].x; x < boundRect[i].x + boundRect[i].width; x++){
+						temp.at<uchar>(y - boundRect[i].y, x - boundRect[i].x) = input.at<uchar>(y, x);
+					}
+				}
+				vector<vector<Point> > directionBlob;
+				vector<Vec4i> subHierarchy;
+				findContours(temp, directionBlob, subHierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+				if (0 < directionBlob.size()){
+					vector<Rect> boundBlob(directionBlob.size());
+
+
+					Point blobCenter;
+					blobCenter.x = boundBlob[0].x + (boundBlob[0].width / 2);
+					blobCenter.y = boundBlob[0].y + (boundBlob[0].height / 2);
+
+					int rotation = findRotation(blobCenter.x, blobCenter.y, (center.x - boundRect[i].width / 2), center.y + boundRect[i].height / 2);
+
+					t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship", rotation);
+					usingT1 = true;
+				}
+				else
+				{
+					cout << "BS" << endl;
+				}
 			}
 			else if (area > p1_sq1Amin && area < p1_sq1Amax){
 				putText(output, "P1 SQ1", center, 1, 1, Scalar::all(200));
-				t2 = thread(clientSendInfo, center.x, center.y, "P1_SQ1");
-				//clientSendInfo(center.x, center.y, "P1_SQ1");
+				t2 = thread(clientSendInfo, center.x, center.y, "P1_SQ1", 0);
 				usingT2 = true;
 			}
 			else if (area > p1_sq2Amin && area < p1_sq2Amax){
 				putText(output, "P1 SQ2", center, 1, 1, Scalar::all(200));
-				t3 = thread(clientSendInfo, center.x, center.y, "P1_SQ2");
-				//clientSendInfo(center.x, center.y, "P1_SQ2");
+				t3 = thread(clientSendInfo, center.x, center.y, "P1_SQ2", 0);
 				usingT3 = true;
 			}
 			// P2 OBJECTS
 			else if (area > p2_shipAmin && area < p2_shipAmax){
 				putText(output, "P2 Ship", center, 1, 1, Scalar::all(200));
-				t4 = thread(clientSendInfo, center.x, center.y, "P2_Ship");
-				//clientSendInfo(center.x, center.y, "P2_Ship");
-				usingT4 = true;
+				
+				Mat temp = Mat::zeros(boundRect[i].height, boundRect[i].width, CV_8UC1);
+
+				for (int y = boundRect[i].y; y < boundRect[i].y + boundRect[i].height; y++){
+					for (int x = boundRect[i].x; x < boundRect[i].x + boundRect[i].width; x++){
+						temp.at<uchar>(y - boundRect[i].y, x - boundRect[i].x) = input.at<uchar>(y, x);
+					}
+				}
+
+				vector<vector<Point> > directionBlob;
+				vector<Vec4i> subHierarchy;
+				findContours(temp, directionBlob, subHierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+				if (0 < directionBlob.size()){
+					vector<Rect> boundBlob(directionBlob.size());
+
+
+					Point blobCenter;
+					blobCenter.x = boundBlob[0].x + (boundBlob[0].width / 2);
+					blobCenter.y = boundBlob[0].y + (boundBlob[0].height / 2);
+
+					t4 = thread(clientSendInfo, center.x, center.y, "P2_Ship", findRotation(blobCenter.x, blobCenter.y, (center.x - boundRect[i].width / 2), center.y + boundRect[i].height / 2));
+					usingT4 = true;
+				}
+				else
+				{
+					cout << "BS" << endl;
+				}
 			}
 			else if (area > p2_sq1Amin && area < p2_sq1Amax){
 				putText(output, "P2 SQ1", center, 1, 1, Scalar::all(200));
-				t5 = thread(clientSendInfo, center.x, center.y, "P2_SQ1");
-				//clientSendInfo(center.x, center.y, "P2_SQ1");
+				t5 = thread(clientSendInfo, center.x, center.y, "P2_SQ1", 0);
 				usingT5 = true;
 			}
 			else if (area > p2_sq2Amin && area < p2_sq2Amax){
 				putText(output, "P2 SQ2", center, 1, 1, Scalar::all(200));
-				t6 = thread(clientSendInfo, center.x, center.y, "P2_SQ2");
-				//clientSendInfo(center.x, center.y, "P2_SQ2");
+				t6 = thread(clientSendInfo, center.x, center.y, "P2_SQ2", 0);
 				usingT6 = true;
 			}
 			else{
@@ -193,13 +248,13 @@ void findObjects(string subject){
 	}
 	catch (Exception e){
 		cout << "Error trying to send info!" << endl;
-		clientSendInfo(0, 0, "Request failed");
+		clientSendInfo(0, 0, "Request failed", 0);
 		return;
 	}
 
 	if (subject == "Server request"){
 		cout << "Request done!" << endl;
-		clientSendInfo(0, 0, "Request done");
+		clientSendInfo(0, 0, "Request done", 0);
 	}
 }
 
@@ -230,56 +285,40 @@ void startServer(){
 	}
 }
 
-/*
-void clientConnect(){
-	int textDelay = 0;
+float findRotation(int Frontx, int Fronty, int Originx, int Originy)
+{
+	float angle;
 
-	char buffer[2000];
-	someSocket.connect(myIP, port);
-	size_t received;
+	int RightAnglex = Frontx;
+	int RightAngley = Originy;
 
-	string text = "Hello there server! I'm the client!";
-	string input;
+	int a;
+	int b;
+	float c;
 
-	someSocket.setBlocking(false);
+	a = Frontx - Originx;
+	b = Originy - Fronty;
 
-	if (someSocket.getRemoteAddress() != "None"){ 
-		cout << "Me: Connected to server! ( "<< someSocket.getRemoteAddress() <<" - " << someSocket.getRemotePort() << " )" << endl;
-		someSocket.send(text.c_str(), text.length() + 1); 
-		clientSendInfo(253, 352, "P1_Ship");
-	}
-	else{
-		cout << "Did not find host - run the server first!\nRun the server and type 'ok' to try again, or anything else to stop: ";
-		cin >> input;
-		if (input == "ok") clientConnect();
-		else exit(0);
-	}
+	c = sqrt(a*a + b*b);
 
-	while (true){
-		someSocket.receive(buffer, sizeof(buffer), received);
 
-		if (received > 0){
-			string msg = buffer;
+	angle = asin(b / c);
 
-			if (msg == "Update!") findObjects("Server request");
-			else cout << "Server: " << msg << endl;
-			received = 0;
-		}
-	}
+	return angle;
 }
-*/
 
-void clientSendInfo(int PositionX, int PositionY, string object) {
+void clientSendInfo(int PositionX, int PositionY, string object, int rotation) {
 	string text = "Hello!";
 
 	string posX = to_string(PositionX);
 	string posY = to_string(PositionY);
+	string direction = to_string(rotation);
 	
 	someSocket.connect(myIP, port);
 	someSocket.setBlocking(false);
 
 	if (someSocket.getRemoteAddress() != "None"){
-		 text = (object + " " + posX + " " + posY);
+		 text = (object + " " + posX + " " + posY + " " + direction);
 		someSocket.send(text.c_str(), text.length() + 1);
 	}
 	else
