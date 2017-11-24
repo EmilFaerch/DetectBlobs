@@ -14,22 +14,18 @@ using namespace std;
 // Initializing and Processing ------
 Mat desktopCapture(Mat input);
 void takeBackground();
+void updateInput();
 void findObjects(string subject);
 void clientConnect();
+void startServer();
 void clientSendInfo(int PositionX, int PositionY, string object);
 void showOutputLoop(); // -----------
 
 /* NETWORKING */
-sf::IpAddress myIP = sf::IpAddress::getLocalAddress();
-sf::TcpSocket someSocket;
+sf::IpAddress myIP = "127.0.0.1";
 int port = 5000;
-
-thread t1, t2, t3, t4, t5, t6;
-
-// Find objects (Ships/Squadrons) 
-//void findObject(Mat objTemplate, string name, double rotation, int team);
-//void findAllOnce();
-
+sf::TcpListener listener;
+sf::TcpSocket someSocket;
 
 /* References */
 Mat input, background, output;
@@ -57,45 +53,22 @@ double p2_sq2Amin = 130, p2_sq2Amax = 190;
 
 int main(int, char)
 {
+	 Sleep(2000);
+	 takeBackground();
+
+	/* ---------------- TESTING PURPOSES ---------------- */
 	input = imread("input image.PNG", 0);
 	output = Mat::zeros(input.rows, input.cols, CV_8UC1);
+	/* ---------------- TESTING PURPOSES ---------------- */
+
 	thread threadOutput(showOutputLoop);
-	thread serverConnection(clientConnect);
-
-// -v- Uncomment -----^ testing purposes
-	//Sleep(2000);
-	//takeBackground();
-	//thread threadOutput(showOutputLoop);
-
-/*
-	cout << "Looking for P1 Ship" << endl;
-	thread p1_ship(findObject, p1_ship, "P1 Ship", 0, 1);
-	cout << "Looking for P1 SQ1" << endl;
-	thread p1_sq1(findObject, p1_sq1, "P1 SQ1", 0, 1);
-	cout << "Looking for P1 SQ2" << endl;
-	thread p1_sq2(findObject, p1_sq2, "P2 SQ2", 0, 2);
-
-	cout << "Looking for P2 Ship" << endl;
-	thread p2_ship(findObject, p2_ship, "P2 Ship", 0, 1);
-	cout << "Looking for P2 SQ1" << endl;
-	thread p2_sq1(findObject, p2_sq1, "P2 SQ1", 0, 1);
-	cout << "Looking for P2 SQ2" << endl;
-	thread p2_sq2(findObject, p2_sq2, "P2 SQ2", 0, 2);
-*/
+	thread updateImage(updateInput);
+//	thread serverConnection(startServer);
 
 	waitKey(0); // Needed for when we're multithreading
 
-/*
-	p1_ship.join();
-	p1_sq1.join();
-	p1_sq2.join();
-
-	p2_ship.join();
-	p2_sq1.join();
-	p2_sq2.join();
-	*/
-
-	serverConnection.join();
+//	serverConnection.join();
+	updateImage.join();
 	threadOutput.join();
 
 	return 0;
@@ -104,31 +77,35 @@ int main(int, char)
 void takeBackground(){
 	background = desktopCapture(background);
 	cvtColor(background, background, CV_RGB2GRAY);
+	GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
 
 	imshow("[BG] Press Space to continue", background);
 	waitKey(0);
 
-	input = desktopCapture(input);
-	cvtColor(input, input, CV_RGB2GRAY);
+	updateInput();
+}
 
-	GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
-	GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
-//	medianBlur(input, input, 5);
+void updateInput(){
+	while (true){
+		cout << "Updating input picture ..." << endl;
 
-	input = input - background; 
+		input = desktopCapture(input);
+		cvtColor(input, input, CV_RGB2GRAY);
 
-	erode(input, input, Mat());
-	dilate(input, input, Mat());
+		GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
 
-	threshold(input, input, 15, 255, THRESH_OTSU);
+		input = input - background;
 
-//	imwrite("input image rotated.png", input);
+		erode(input, input, Mat());
+		dilate(input, input, Mat());
 
-	//GaussianBlur(p1_ship, p1_ship, Size(3, 3), 1.5, 1.5); GaussianBlur(p2_ship, p2_ship, Size(3, 3), 1.5, 1.5);
-	//GaussianBlur(p1_sq1, p1_sq1, Size(3, 3), 1.5, 1.5); GaussianBlur(p2_sq1, p2_sq1, Size(3, 3), 1.5, 1.5);
-	//GaussianBlur(p1_sq2, p1_sq2, Size(3, 3), 1.5, 1.5); GaussianBlur(p2_sq2, p2_sq2, Size(3, 3), 1.5, 1.5);
+		threshold(input, input, 15, 255, THRESH_OTSU);
 
-	input.copyTo(output);
+		input.copyTo(output);
+
+		//	imwrite("input image rotated.png", input);
+		Sleep(1000);
+	}
 }
 
 void findObjects(string subject){
@@ -204,10 +181,17 @@ void findObjects(string subject){
 	}
 }
 
+void startServer(){
+	listener = new sf::TcpListener(ip, port);
+}
+
+/*
 void clientConnect(){
+	int textDelay = 0;
+
 	char buffer[2000];
 	someSocket.connect(myIP, port);
-	std::size_t received;
+	size_t received;
 
 	string text = "Hello there server! I'm the client!";
 	string input;
@@ -217,9 +201,10 @@ void clientConnect(){
 	if (someSocket.getRemoteAddress() != "None"){ 
 		cout << "Me: Connected to server! ( "<< someSocket.getRemoteAddress() <<" - " << someSocket.getRemotePort() << " )" << endl;
 		someSocket.send(text.c_str(), text.length() + 1); 
+		clientSendInfo(253, 352, "P1_Ship");
 	}
 	else{
-		cout << "Run the server first! (Did not find host)\nRun the server and type 'ok' to try again, or anything else to stop: ";
+		cout << "Did not find host - run the server first!\nRun the server and type 'ok' to try again, or anything else to stop: ";
 		cin >> input;
 		if (input == "ok") clientConnect();
 		else exit(0);
@@ -237,6 +222,7 @@ void clientConnect(){
 		}
 	}
 }
+*/
 
 void clientSendInfo(int PositionX, int PositionY, string object) {
 	string text = "Hello!";
