@@ -26,6 +26,9 @@ sf::IpAddress myIP = "127.0.0.1";
 int port = 5000;
 sf::TcpListener listener;
 sf::TcpSocket someSocket;
+bool listening = true, connected = false;
+
+thread t1, t2, t3, t4, t5, t6;
 
 /* References */
 Mat input, background, output;
@@ -58,17 +61,19 @@ int main(int, char)
 
 	/* ---------------- TESTING PURPOSES ---------------- */
 	input = imread("input image.PNG", 0);
-	output = Mat::zeros(input.rows, input.cols, CV_8UC1);
+	output = Mat::zeros(background.rows, background.cols, CV_8UC1);
 	/* ---------------- TESTING PURPOSES ---------------- */
 
 	thread threadOutput(showOutputLoop);
-	thread updateImage(updateInput);
-//	thread serverConnection(startServer);
+	//thread updateImage(updateInput);
+	thread serverConnection(startServer);
 
-	waitKey(0); // Needed for when we're multithreading
+	cout << input.rows << ", " << input.cols << endl;
 
-//	serverConnection.join();
-	updateImage.join();
+	waitKey(0); // Needed for multithreading, so the program doesn't close / crash
+
+	serverConnection.join();
+	//updateImage.join();
 	threadOutput.join();
 
 	return 0;
@@ -81,13 +86,10 @@ void takeBackground(){
 
 	imshow("[BG] Press Space to continue", background);
 	waitKey(0);
-
-	updateInput();
 }
 
 void updateInput(){
 	while (true){
-		cout << "Updating input picture ..." << endl;
 
 		input = desktopCapture(input);
 		cvtColor(input, input, CV_RGB2GRAY);
@@ -112,77 +114,120 @@ void findObjects(string subject){
 
 	cout << subject << endl;
 
+	if (subject == "Server request"){
+		cout << "Request start!" << endl;
+		clientSendInfo(0, 0, "Request start");
+	}
+
+	bool usingT1 = false, usingT2 = false, usingT3 = false, usingT4 = false, usingT5 = false, usingT6 = false;
+
 	/// Find contours
 	vector<vector<Point> > contours;
 	vector<Vec4i> hierarchy;
 	findContours(input, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
 	vector<Rect> boundRect(contours.size());
 
-	for (int i = 0; i < contours.size(); i++){
-		boundRect[i] = boundingRect(Mat(contours[i]));
-		int area = contourArea(contours[i]);
+	try{
+		for (int i = 0; i < contours.size(); i++){
+			boundRect[i] = boundingRect(Mat(contours[i]));
+			int area = contourArea(contours[i]);
 
-		Point center;
-		center.x = int(boundRect[i].x);
-		center.y = int(boundRect[i].y) - 5;
+			Point center;
+			center.x = int(boundRect[i].x);
+			center.y = int(boundRect[i].y) - 5;
 
-		drawContours(output, contours, i, Scalar::all(255));
-		rectangle(output, boundRect[i].tl(), boundRect[i].br(), Scalar::all(200), 2, 8, 0);
+			drawContours(output, contours, i, Scalar::all(255));
+			rectangle(output, boundRect[i].tl(), boundRect[i].br(), Scalar::all(200), 2, 8, 0);
 
-		// P1 OBJECTS
-		if (area > p1_shipAmin && area < p1_shipAmax){
-			putText(output, "P1 Ship", center, 1, 1, Scalar::all(200));
-			t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship");
-			
-			//clientSendInfo(center.x, center.y, "P1_Ship");
+			// P1 OBJECTS
+			if (area > p1_shipAmin && area < p1_shipAmax){
+				putText(output, "P1 Ship", center, 1, 1, Scalar::all(200));
+				t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship");
+				usingT1 = true;
+				//clientSendInfo(center.x, center.y, "P1_Ship");
+			}
+			else if (area > p1_sq1Amin && area < p1_sq1Amax){
+				putText(output, "P1 SQ1", center, 1, 1, Scalar::all(200));
+				t2 = thread(clientSendInfo, center.x, center.y, "P1_SQ1");
+				//clientSendInfo(center.x, center.y, "P1_SQ1");
+				usingT2 = true;
+			}
+			else if (area > p1_sq2Amin && area < p1_sq2Amax){
+				putText(output, "P1 SQ2", center, 1, 1, Scalar::all(200));
+				t3 = thread(clientSendInfo, center.x, center.y, "P1_SQ2");
+				//clientSendInfo(center.x, center.y, "P1_SQ2");
+				usingT3 = true;
+			}
+			// P2 OBJECTS
+			else if (area > p2_shipAmin && area < p2_shipAmax){
+				putText(output, "P2 Ship", center, 1, 1, Scalar::all(200));
+				t4 = thread(clientSendInfo, center.x, center.y, "P2_Ship");
+				//clientSendInfo(center.x, center.y, "P2_Ship");
+				usingT4 = true;
+			}
+			else if (area > p2_sq1Amin && area < p2_sq1Amax){
+				putText(output, "P2 SQ1", center, 1, 1, Scalar::all(200));
+				t5 = thread(clientSendInfo, center.x, center.y, "P2_SQ1");
+				//clientSendInfo(center.x, center.y, "P2_SQ1");
+				usingT5 = true;
+			}
+			else if (area > p2_sq2Amin && area < p2_sq2Amax){
+				putText(output, "P2 SQ2", center, 1, 1, Scalar::all(200));
+				t6 = thread(clientSendInfo, center.x, center.y, "P2_SQ2");
+				//clientSendInfo(center.x, center.y, "P2_SQ2");
+				usingT6 = true;
+			}
+			else{
+				cout << "Unidentified object at " << boundRect[i].x + (boundRect[i].width / 2) << ", " << boundRect[i].y + (boundRect[i].height / 2) << " - Area: " << area << endl;
+				putText(output, "Unidentified", center, 1, 1, Scalar::all(200));
+			}
+			Sleep(50);
 		}
-		else if (area > p1_sq1Amin && area < p1_sq1Amax){
-			putText(output, "P1 SQ1", center, 1, 1, Scalar::all(200));
-			t2 = thread(clientSendInfo, center.x, center.y, "P1_SQ1");
-			//clientSendInfo(center.x, center.y, "P1_SQ1");
-		}
-		else if (area > p1_sq2Amin && area < p1_sq2Amax){
-			putText(output, "P1 SQ2", center, 1, 1, Scalar::all(200));
-			 t3 = thread(clientSendInfo, center.x, center.y, "P1_SQ2");
-			//clientSendInfo(center.x, center.y, "P1_SQ2");
-		} 
-		// P2 OBJECTS
-		else if (area > p2_shipAmin && area < p2_shipAmax){
-			putText(output, "P2 Ship", center, 1, 1, Scalar::all(200));
-			 t4 = thread(clientSendInfo, center.x, center.y, "P2_Ship");
-			//clientSendInfo(center.x, center.y, "P2_Ship");
-		}
-		else if (area > p2_sq1Amin && area < p2_sq1Amax){
-			putText(output, "P2 SQ1", center, 1, 1, Scalar::all(200));
-			 t5 = thread(clientSendInfo, center.x, center.y, "P2_SQ1");
-			//clientSendInfo(center.x, center.y, "P2_SQ1");
-		}
-		else if (area > p2_sq2Amin && area < p2_sq2Amax){
-			putText(output, "P2 SQ2", center, 1, 1, Scalar::all(200));
-			 t6 = thread(clientSendInfo, center.x, center.y, "P2_SQ2");
-			//clientSendInfo(center.x, center.y, "P2_SQ2");
-		}
-		else{
-			cout << "Unidentified object at " << boundRect[i].x + (boundRect[i].width / 2) << ", " << boundRect[i].y + (boundRect[i].height / 2) << " - Area: " << area << endl;
-			putText(output, "Unidentified", center, 1, 1, Scalar::all(200));
-		}
-		Sleep(50);
+
+		if (usingT1) t1.join();
+		if (usingT2) t2.join();
+		if (usingT3) t3.join();
+		if (usingT4) t4.join();
+		if (usingT5) t5.join();
+		if (usingT6) t6.join();
 	}
-	t1.join();
-	t2.join();
-	t3.join();
-	t4.join();
-	t5.join();
-	t6.join();
+	catch (Exception e){
+		cout << "Error trying to send info!" << endl;
+		clientSendInfo(0, 0, "Request failed");
+		return;
+	}
 
 	if (subject == "Server request"){
 		cout << "Request done!" << endl;
-		clientSendInfo(0, 0, "Request done!");
+		clientSendInfo(0, 0, "Request done");
 	}
 }
 
 void startServer(){
-	listener = new sf::TcpListener(ip, port);
+	char buffer[2000];
+	size_t received;
+
+	listener.listen(port, myIP);
+
+	while (listening){
+		cout << "Waiting for client ... " << endl;
+		listener.setBlocking(true);	// Går først videre når den connecter/receiver
+		listener.accept(someSocket);
+		cout << "Client connected!" << endl;
+		connected = true;
+		while (connected){
+				//	listener.setBlocking(false); // Prøver at receive hele tiden
+				someSocket.receive(buffer, sizeof(buffer), received);
+
+				if (received > 0){
+					string msg = buffer;
+
+					if (msg.substr(0,7) == "Update!") findObjects("Server request");
+					else cout << "Client: " << msg << endl;
+					received = 0;
+				}
+		}
+	}
 }
 
 /*
