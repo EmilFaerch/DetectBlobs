@@ -6,6 +6,7 @@
 #include <SFML\System.hpp>
 #include <opencv2\opencv.hpp>
 #include <opencv2\core.hpp>
+#define _USE_MATH_DEFINES
 #include <math.h>
 
 using namespace cv;
@@ -31,7 +32,7 @@ bool listening = true, connected = false;
 // Threads for sending Ship info to client
 thread t1, t2, t3, t4, t5, t6;
 // Threads for finding Ship direction coordinates
-thread st1, st2;
+// thread st1, st2;
 
 /* Materials */
 Mat input, background, blobs, output, temp1, temp2;
@@ -49,17 +50,20 @@ double team2_minMatchValue = 0.7;
 double bestMatch = 0;
 --------------------------------------- */
 
-double p1_shipAmin = 5500, p1_shipAmax = 6200;
-double p1_sq1Amin = 850, p1_sq1Amax = 1050;
-double p1_sq2Amin = 500, p1_sq2Amax = 550;
 
-double p2_shipAmin = 3700, p2_shipAmax = 4370;
-double p2_sq1Amin = 380, p2_sq1Amax = 500;
-double p2_sq2Amin = 180, p2_sq2Amax = 230;
+//double p1_shipCircMin = 0.4, p1_shipCircMax = 0.5;
+double p1_sq1CircMin = 0.5, p1_sq1CircMax = 0.65;
+double p1_sq2CircMin = 0.8, p1_sq2CircMax = 0.9;
+
+
+//double p2_shipCircMin = 0.6, p2_shipCircMax = 0.7;
+double p2_sq1CircMin = 0.4, p2_sq1CircMax = 0.49;
+double p2_sq2CircMin = 0.5, p2_sq2CircMax = 0.6;
+
+int squadArea = 2500;
 
 int main(int, char)
 {
-	// Sleep(2000);
 	 takeBackground();
 	 output = Mat::zeros(background.rows, background.cols, CV_8UC1);
 	 blobs = Mat::zeros(background.rows, background.cols, CV_8UC1);
@@ -86,33 +90,37 @@ int main(int, char)
 }
 
 void takeBackground(){
-//	background = desktopCapture(background);
-//	cvtColor(background, background, CV_RGB2GRAY);
 	background = imread("bg.PNG", 0);
-//	GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
+	//Sleep(2000);
+	//background = desktopCapture(background);
+	//cvtColor(background, background, CV_RGB2GRAY);
+	//GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
 
-//	imwrite("bg.PNG", background);
-//	imshow("[BG] Press Space to continue", background);
-//	waitKey(0);
+	//imwrite("bg.PNG", background);
+	//imshow("[BG] Press Space to continue", background);
+	//waitKey(0);
 }
 
 void updateInput(){
-		input = desktopCapture(input);
-		cvtColor(input, input, CV_RGB2GRAY);
+	// input = imread("input image.png", 0);
+	input = desktopCapture(input);
+	cvtColor(input, input, CV_RGB2GRAY);
 
-		GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
+	GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
 
-		input = input - background;
+	input = input - background;
 
-		erode(input, input, Mat());
-		dilate(input, input, Mat());
+	erode(input, input, Mat());
+	dilate(input, input, Mat());
 
-		threshold(input, input, 15, 255, THRESH_OTSU);
+	threshold(input, input, 15, 255, THRESH_OTSU);
 
-		input.copyTo(output);
-		input.copyTo(blobs);
+	input.copyTo(output);
+	input.copyTo(blobs);
 
-		cout << "Done updating input picture!" << endl;
+	imwrite("input image.png", input);
+
+	cout << "Done updating input picture!" << endl;
 }
 
 void findObjects(string subject){
@@ -134,15 +142,24 @@ void findObjects(string subject){
 		vector<Vec4i> hierarchy;
 		findContours(blobs, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
 		vector<Rect> boundRect(contours.size());
-
-		cout << contours.size() << endl;
+		vector<vector<Point> > hull(contours.size());
 
 		for (int i = 0; i < contours.size(); i++){
-			int area = contourArea(contours[i]);
-			if (area > 100){
+			double contArea = contourArea(contours[i]);
+			convexHull(contours[i], hull[i]);
+			double hullArea = contourArea(hull[i]);
+			if (contArea > 150){
 
 				boundRect[i] = boundingRect(Mat(contours[i]));
+				double perimeter = arcLength(contours[i], true);
+				double circularity = (4 * M_PI * contArea) / pow(perimeter, 2);
 
+				double convexRatio = contArea / hullArea;
+				bool convex = false;
+
+				if (convexRatio >= 0.9) convex = true;
+
+				cout << " - " << endl;
 
 				Point center;
 				center.x = boundRect[i].x + (boundRect[i].width / 2);
@@ -151,54 +168,61 @@ void findObjects(string subject){
 				drawContours(blobs, contours, i, Scalar::all(255), CV_FILLED);
 				rectangle(output, boundRect[i].tl(), boundRect[i].br(), Scalar::all(200), 2, 8, 0);
 
+				double boundAreal = float(boundRect[i].height) * float(boundRect[i].width);
+
+				
 				// P1 OBJECTS
-				if (area > p1_shipAmin && area < p1_shipAmax){
+				if (convex && squadArea < contArea){
 					if (!usingT1){
-						putText(output, "P1 Ship", center, 1, 1, Scalar::all(200));
-						cout << "P1 Ship found at: " << center.x << ", " << center.y << " - " << area << endl;
-
-						temp1 = Mat::zeros(boundRect[i].height, boundRect[i].width, CV_8UC1);
-
-						for (int y = boundRect[i].y; y < boundRect[i].y + boundRect[i].height; y++){
-							for (int x = boundRect[i].x; x < boundRect[i].x + boundRect[i].width; x++){
-								temp1.at<uchar>(y - boundRect[i].y, x - boundRect[i].x) = input.at<uchar>(y, x);
-							}
-						}
-
-						vector<vector<Point> > directionBlob;
-						vector<Vec4i> subHierarchy;
-						findContours(temp1, directionBlob, subHierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
-
-						cout << "dirBlob amount: " << directionBlob.size() << endl;
-
-						if (0 < directionBlob.size()){
-							vector<Rect> boundBlob(directionBlob.size());
-
-
-							Point blobCenter;
-							blobCenter.x = boundBlob[0].x + (boundBlob[0].width / 2);
-							blobCenter.y = boundBlob[0].y + (boundBlob[0].height / 2);
-
-							int rotation = findRotation(blobCenter.x, blobCenter.y, (center.x - boundRect[i].width / 2), center.y + boundRect[i].height / 2);
-
-							t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship", rotation);
+							putText(output, "P1 Ship", boundRect[i].tl(), 1, 1, Scalar::all(200));
+							cout << "P1 Ship found at: " << center.x << ", " << center.y << " - " << circularity << endl;
+							
+							t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship", 0);
 							usingT1 = true;
+
+							// Find inner blob for rotation purposes ....
+							/*
+							temp1 = Mat::zeros(boundRect[i].height, boundRect[i].width, CV_8UC1);
+
+							for (int y = boundRect[i].y; y < boundRect[i].y + boundRect[i].height; y++){
+								for (int x = boundRect[i].x; x < boundRect[i].x + boundRect[i].width; x++){
+									temp1.at<uchar>(y - boundRect[i].y, x - boundRect[i].x) = input.at<uchar>(y, x);
+								}
+							}
+
+							vector<vector<Point> > directionBlob;
+							vector<Vec4i> subHierarchy;
+							findContours(temp1, directionBlob, subHierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+							if (0 < directionBlob.size()){
+								vector<Rect> boundBlob(directionBlob.size());
+
+
+								Point blobCenter;
+								blobCenter.x = boundBlob[0].x + (boundBlob[0].width / 2);
+								blobCenter.y = boundBlob[0].y + (boundBlob[0].height / 2);
+
+								int rotation = findRotation(blobCenter.x, blobCenter.y, (center.x - boundRect[i].width / 2), center.y + boundRect[i].height / 2);
+
+								t1 = thread(clientSendInfo, center.x, center.y, "P1_Ship", rotation);
+								usingT1 = true;
+							}
+							else
+							{
+								cout << "lort" << endl;
+							}
+							*/
 						}
 						else
 						{
-							cout << "lort" << endl;
+							cout << "Found duplicate of P1 Ship" << endl;
 						}
 					}
-					else
-					{
-						cout << "Found duplicate of P1 Ship" << endl;
-					}
-				}
-				else if (area > p1_sq1Amin && area < p1_sq1Amax){
+				else if (convex && circularity > p1_sq1CircMin && circularity < p1_sq1CircMax){
 					if (!usingT2){
-						putText(output, "P1 SQ1", center, 1, 1, Scalar::all(200));
+						putText(output, "P1 SQ1", boundRect[i].tl(), 1, 1, Scalar::all(200));
 						t2 = thread(clientSendInfo, center.x, center.y, "P1_SQ1", 0);
-						cout << "P1 SQ1 found at: " << center.x << ", " << center.y << " - " << area << endl;
+						cout << "P1 SQ1 found at: " << center.x << ", " << center.y << " - " << circularity << endl;
 						usingT2 = true;
 					}
 					else
@@ -206,11 +230,11 @@ void findObjects(string subject){
 						cout << "Found duplicate of P1 SQ1" << endl;
 					}
 				}
-				else if (area > p1_sq2Amin && area < p1_sq2Amax){
+				else if (convex && circularity > p1_sq2CircMin && circularity < p1_sq2CircMax){
 					if (!usingT3){
-						putText(output, "P1 SQ2", center, 1, 1, Scalar::all(200));
+						putText(output, "P1 SQ2", boundRect[i].tl(), 1, 1, Scalar::all(200));
 						t3 = thread(clientSendInfo, center.x, center.y, "P1_SQ2", 0);
-						cout << "P1 SQ2 found at: " << center.x << ", " << center.y << " - " << area << endl;
+						cout << "P1 SQ2 found at: " << center.x << ", " << center.y << " - " << circularity << endl;
 						usingT3 = true;
 					}
 					else
@@ -219,11 +243,16 @@ void findObjects(string subject){
 					}
 				}
 				// P2 OBJECTS
-				else if (area > p2_shipAmin && area < p2_shipAmax){
+				else if (!convex && squadArea < contArea){
 					if (!usingT4){
-						putText(output, "P2 Ship", center, 1, 1, Scalar::all(200));
-						cout << "P2 Ship found at: " << center.x << ", " << center.y << " - " << area << endl;
+						putText(output, "P2 Ship", boundRect[i].tl(), 1, 1, Scalar::all(200));
+						cout << "P2 Ship found at: " << center.x << ", " << center.y << " - " << circularity << endl;
+						
+						t4 = thread(clientSendInfo, center.x, center.y, "P2_Ship", 0);
+						usingT4 = true;
 
+						// Find inner Blob for rotation purposes...
+						/*
 						temp2 = Mat::zeros(boundRect[i].height, boundRect[i].width, CV_8UC1);
 
 						for (int y = boundRect[i].y; y < boundRect[i].y + boundRect[i].height; y++){
@@ -250,18 +279,18 @@ void findObjects(string subject){
 						else
 						{
 							cout << "BS" << endl;
-						}
+						}*/
 					}
 					else
 					{
 						cout << "Found duplicate of P2 Ship" << endl;
 					}
 				}
-				else if (area > p2_sq1Amin && area < p2_sq1Amax){
+				else if (!convex && circularity > p2_sq1CircMin && circularity < p2_sq1CircMax){
 					if (!usingT5){
-						putText(output, "P2 SQ1", center, 1, 1, Scalar::all(200));
+						putText(output, "P2 SQ1", boundRect[i].tl(), 1, 1, Scalar::all(200));
 						t5 = thread(clientSendInfo, center.x, center.y, "P2_SQ1", 0);
-						cout << "P2 SQ1 found at: " << center.x << ", " << center.y << " - " << area << endl;
+						cout << "P2 SQ1 found at: " << center.x << ", " << center.y << " - " << circularity << endl;
 						usingT5 = true;
 					}
 					else
@@ -269,11 +298,11 @@ void findObjects(string subject){
 						cout << "Found duplicate of P2 SQ1" << endl;
 					}
 				}
-				else if (area > p2_sq2Amin && area < p2_sq2Amax){
+				else if (!convex && circularity > p2_sq2CircMin && circularity < p2_sq2CircMax){
 					if (!usingT6){
-						putText(output, "P2 SQ2", center, 1, 1, Scalar::all(200));
+						putText(output, "P2 SQ2", boundRect[i].tl(), 1, 1, Scalar::all(200));
 						t6 = thread(clientSendInfo, center.x, center.y, "P2_SQ2", 0);
-						cout << "P2 SQ2 found at: " << center.x << ", " << center.y << " - " << area << endl;
+						cout << "P2 SQ2 found at: " << center.x << ", " << center.y << " - " << circularity << endl;
 						usingT6 = true;
 					}
 					else
@@ -283,10 +312,14 @@ void findObjects(string subject){
 				}
 				else
 				{
-					cout << "Unidentified object at " << boundRect[i].x + (boundRect[i].width / 2) << ", " << boundRect[i].y + (boundRect[i].height / 2) << " - Area: " << area << endl;
-					putText(output, "Unidentified", center, 1, 1, Scalar::all(200));
+					cout << "Unidentified object at " << boundRect[i].x + (boundRect[i].width / 2) << ", " << boundRect[i].y + (boundRect[i].height / 2) << " - contArea: " << contArea << endl;
+					putText(output, "Unidentified", boundRect[i].tl(), 1, 1, Scalar::all(200));
 				}
-				Sleep(50);
+				
+				cout << "Circularity: " << circularity << " Blob Area : " << contArea << " - Hull Area : " 
+					<< hullArea << " - Ratio : " << convexRatio << " - Convex: " << convex << " - " << endl;
+
+				//Sleep(50);
 			}
 			else
 			{
@@ -298,12 +331,12 @@ void findObjects(string subject){
 
 			cout << usingT1 << usingT2 << usingT3 << usingT4 << usingT5 << usingT6 << endl;
 
-			if (usingT1) { cout << "1" << endl; t1.join(); cout << "1" << endl; }
-			if (usingT2) { cout << "2" << endl; t2.join(); cout << "2" << endl; }
-			if (usingT3) { cout << "3" << endl; t3.join(); cout << "3" << endl; }
-			if (usingT4) { cout << "4" << endl; t4.join(); cout << "4" << endl; }
-			if (usingT5) { cout << "5" << endl; t5.join(); cout << "5" << endl; }
-			if (usingT6) { cout << "6" << endl; t6.join(); cout << "6" << endl; }
+			if (usingT1) { t1.join(); }
+			if (usingT2) { t2.join(); }
+			if (usingT3) { t3.join(); }
+			if (usingT4) { t4.join(); }
+			if (usingT5) { t5.join(); }
+			if (usingT6) { t6.join(); }
 		}
 	catch (Exception e){
 		cout << "Error trying to send info!" << endl;
@@ -331,7 +364,7 @@ void startServer(){
 		connected = true;
 		someSocket.setBlocking(false);
 		while (connected){
-				//	listener.setBlocking(false); // Prøver at receive hele tiden
+				listener.setBlocking(false); // Prøver at receive hele tiden // HELE DET HER VAR KOMMENTERET UD
 				someSocket.receive(buffer, sizeof(buffer), received);
 
 				if (received > 0){
@@ -345,6 +378,8 @@ void startServer(){
 	}
 }
 
+// Find rotation for inner blobs ...
+/*
 float findRotation(int Frontx, int Fronty, int Originx, int Originy)
 {
 	float angle;
@@ -366,6 +401,7 @@ float findRotation(int Frontx, int Fronty, int Originx, int Originy)
 
 	return angle;
 }
+*/
 
 void clientSendInfo(int PositionX, int PositionY, string object, int rotation) {
 	string text;
