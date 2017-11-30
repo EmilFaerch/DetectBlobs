@@ -52,13 +52,13 @@ double bestMatch = 0;
 
 
 //double p1_shipCircMin = 0.4, p1_shipCircMax = 0.5;
-double p1_sq1CircMin = 0.5, p1_sq1CircMax = 0.65;
-double p1_sq2CircMin = 0.8, p1_sq2CircMax = 0.9;
+double p1_sq1CircMin = 0.50, p1_sq1CircMax = 0.65;
+double p1_sq2CircMin = 0.80, p1_sq2CircMax = 0.90;
 
 
 //double p2_shipCircMin = 0.6, p2_shipCircMax = 0.7;
-double p2_sq1CircMin = 0.4, p2_sq1CircMax = 0.49;
-double p2_sq2CircMin = 0.5, p2_sq2CircMax = 0.6;
+double p2_sq1CircMin = 0.30, p2_sq1CircMax = 0.45;
+double p2_sq2CircMin = 0.46, p2_sq2CircMax = 0.80;
 
 int squadArea = 2500;
 
@@ -227,7 +227,9 @@ void findObjects(string subject){
 					}
 					else
 					{
-						cout << "Found duplicate of P1 SQ1" << endl;
+						cout << "Found duplicate of P1 SQ1, assuming it is P1 SQ2 ..." << endl;
+						usingT3 = true;
+						t3 = thread(clientSendInfo, center.x, center.y, "P1_SQ2", 0);
 					}
 				}
 				else if (convex && circularity > p1_sq2CircMin && circularity < p1_sq2CircMax){
@@ -239,7 +241,15 @@ void findObjects(string subject){
 					}
 					else
 					{
-						cout << "Found duplicate of P1 SQ2" << endl;
+						if (!usingT2){
+							cout << "Found duplicate of P1 SQ2, assuming it's P1 SQ1 ..." << endl;
+							t2 = thread(clientSendInfo, center.x, center.y, "P1_SQ1", 0);
+							usingT2 = true;
+						}
+						else
+						{
+							cout << "Tried assuming it was a duplicate of P1 SQ2, but P1 SQ2 has already been found." << endl;
+						}
 					}
 				}
 				// P2 OBJECTS
@@ -283,7 +293,7 @@ void findObjects(string subject){
 					}
 					else
 					{
-						cout << "Found duplicate of P2 Ship" << endl;
+						cout << "Found duplicate of P2 Ship (this REALLY shouldn't happen)." << endl;
 					}
 				}
 				else if (!convex && circularity > p2_sq1CircMin && circularity < p2_sq1CircMax){
@@ -295,7 +305,15 @@ void findObjects(string subject){
 					}
 					else
 					{
-						cout << "Found duplicate of P2 SQ1" << endl;
+						if (!usingT6){
+							cout << "Found duplicate of P2 SQ1, assuming it's P2 SQ2 ..." << endl;
+							t6 = thread(clientSendInfo, center.x, center.y, "P2_SQ2", 0);
+							usingT6 = true;
+						}
+						else
+						{
+							cout << "Tried assuming it was a duplicate of P2 SQ2, but P2 SQ2 has already been found." << endl;
+						}
 					}
 				}
 				else if (!convex && circularity > p2_sq2CircMin && circularity < p2_sq2CircMax){
@@ -307,7 +325,15 @@ void findObjects(string subject){
 					}
 					else
 					{
-						cout << "Found duplicate of P2 SQ2" << endl;
+						if (!usingT5){
+							cout << "Found duplicate of P2 SQ2, assuming it's P2 SQ1 ..." << endl;
+							t5 = thread(clientSendInfo, center.x, center.y, "P2_SQ1", 0);
+							usingT5 = true;
+						}
+						else
+						{
+							cout << "Tried assuming it was a duplicate of P2 SQ1, but P2 SQ1 has already been found." << endl;
+						}
 					}
 				}
 				else
@@ -317,7 +343,7 @@ void findObjects(string subject){
 				}
 				
 				cout << "Circularity: " << circularity << " Blob Area : " << contArea << " - Hull Area : " 
-					<< hullArea << " - Ratio : " << convexRatio << " - Convex: " << convex << " - " << endl;
+					<< hullArea << " - Ratio : " << convexRatio << " - Convex: " << convex << endl;
 
 				//Sleep(50);
 			}
@@ -325,11 +351,12 @@ void findObjects(string subject){
 			{
 				cout << "Skipping small blob ..." << endl;
 			}
+
+			cout << " - " << endl; // To clearly seperate the entries in the console = better overview
 		}
 
-			cout << "For loop ended!" << endl;
-
-			cout << usingT1 << usingT2 << usingT3 << usingT4 << usingT5 << usingT6 << endl;
+			cout << "For loop ended!" << endl; // Debugging ...
+			cout << usingT1 << usingT2 << usingT3 << usingT4 << usingT5 << usingT6 << endl; // ... purposes
 
 			if (usingT1) { t1.join(); }
 			if (usingT2) { t2.join(); }
