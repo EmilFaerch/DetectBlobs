@@ -17,7 +17,7 @@ Mat desktopCapture(Mat input);
 void takeBackground();
 void updateInput();
 void findObjects(string subject);
-void scanCommand();
+string scanCommand();
 //float findRotation(int Frontx, int Fronty, int Originx, int Originy);
 void startServer();
 void clientSendInfo(int PositionX, int PositionY, string object, int rotation);
@@ -32,8 +32,6 @@ bool listening = true, connected = false;
 
 // Threads for sending Ship info to client
 thread t1, t2, t3, t4, t5, t6;
-// Threads for finding Ship direction coordinates
-// thread st1, st2;
 
 /* Materials */
 Mat input, background, blobs, output, temp1, temp2;
@@ -67,11 +65,14 @@ double p1_sq2CircMin = 0.80, p1_sq2CircMax = 0.90;
 double p2_sq1CircMin = 0.30, p2_sq1CircMax = 0.45;
 double p2_sq2CircMin = 0.46, p2_sq2CircMax = 0.80;
 
+bool Scanning = false;
+
 Point scanStart, scanStop;
 
 int main(int, char)
 {
-	scanStart.x = 30; scanStart.y = 10; scanStop.x = 130; scanStop.y = 110;
+	// Scanning = true; // Used to display the Scanning Area on 'output' image
+	scanStart.x = 30; scanStart.y = 450; scanStop.x = scanStart.x + 80; scanStop.y = scanStart.y + 80;
 
 	 takeBackground();
 	 output = Mat::zeros(background.rows, background.cols, CV_8UC1);
@@ -83,16 +84,13 @@ int main(int, char)
 	/* ---------------- TESTING PURPOSES ---------------- */
 
 	thread threadOutput(showOutputLoop);
-//	thread updateImage(updateInput);
-
-	cout << "background pic dimensions: " << background.cols << ", " << background.rows << endl;
-
+	thread updateImage(updateInput);
 	thread serverConnection(startServer);
 
-	waitKey(0); // Needed for multithreading, so the program doesn't close / crash
+	waitKey(0); // Needed for multithreading, so the program doesn't close / crash (on exit)
 
 	serverConnection.join();
-//	updateImage.join();
+	updateImage.join();
 	threadOutput.join();
 
 	return 0;
@@ -111,25 +109,25 @@ void takeBackground(){
 }
 
 void updateInput(){
-//input = imread("input image.png", 0);
-	input = desktopCapture(input);
-	cvtColor(input, input, CV_RGB2GRAY);
+		//input = imread("input image.png", 0);
+		input = desktopCapture(input);
+		cvtColor(input, input, CV_RGB2GRAY);
 
-	GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
+		GaussianBlur(input, input, Size(3, 3), 1.5, 1.5);
 
-	input = input - background;
+		input = input - background;
 
-	erode(input, input, Mat());
-	dilate(input, input, Mat());
+		erode(input, input, Mat());
+		dilate(input, input, Mat());
 
-	threshold(input, input, 15, 255, THRESH_OTSU);
+		threshold(input, input, 15, 255, THRESH_OTSU);
 
-	input.copyTo(output);
-	input.copyTo(blobs);
+		input.copyTo(output);
+		input.copyTo(blobs);
 
-//	imwrite("input image.png", input);
+		//	imwrite("input image.png", input);
 
-	cout << "Done updating input picture!" << endl;
+		cout << "Done updating input picture!" << endl;
 }
 
 void findObjects(string subject){
@@ -421,7 +419,12 @@ void startServer(){
 				if (received > 0){
 					string msg = buffer;
 
-					if (msg.substr(0,7) == "Update!") findObjects("Server request");
+					// 0 - 7 er fixed fordi vi ved at "Update!" har syv bogstaver, og vi gør det for at filtrere noise;
+					if (msg.substr(0, 7) == "Update!") findObjects("Server request"); //  data fra packets osv, det er lidt kompliceret fra C# til C++
+					
+					// og "Scan!" har 5, så vi gør det samme
+					else if (msg.substr(0, 5) == "Scan!") clientSendInfo(0, 0, "Scan " + scanCommand(), 0);
+					
 					else cout << "Client: " << msg << endl;
 					received = 0;
 				}
@@ -429,8 +432,52 @@ void startServer(){
 	}
 }
 
-void scanCommand(){
-	rectangle(output, Point(scanStart), Point(scanStop), Scalar::all(255), 2, 8, 0);
+string scanCommand(){
+	string command; 
+	int foundBlobs = 0;
+	int minBlobArea = 60;
+
+	vector<vector<Point> > contours;
+	vector<Vec4i> hierarchy;
+
+	Mat scanROI = Mat::zeros(scanStop.y - scanStart.y, scanStop.x - scanStart.x, CV_8UC1);
+	
+	for (int y = scanStart.y; y < scanStop.y; y++){
+		for (int x = scanStart.x; x < scanStop.x; x++){
+			scanROI.at<uchar>(y - scanStart.y, x - scanStart.x) = input.at<uchar>(y, x);
+		}
+	}
+
+	imshow("ROI", scanROI);
+
+	findContours(scanROI, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+	cout << "Contours Found: " << to_string(contours.size()) << endl;
+
+	if (contours.size() > 0){
+		for (int i = 0; i < contours.size(); i++){
+		
+			if (contourArea(contours[i]) > minBlobArea){ // Small BLOBs might be created due to "erode/dilate", så we make sure they are not counted
+				foundBlobs++;
+				drawContours(blobs, contours, i, Scalar::all(255), CV_FILLED);
+			}
+		}
+		
+		// Incremented by one because the paper will count as a blob as well!
+		if (foundBlobs == 1) command = "Speed";
+		else if (foundBlobs == 2) command = "Repair";
+		else if (foundBlobs == 3) command = "Concentrate";
+		else { cout << "Found " << foundBlobs << " BLOBs - Please adjust the card and try again." << endl; command = "Failed"; }
+	}
+	else
+	{
+		cout << "Could not recognize any BLOBs in the area - Please adjust the card and try again." << endl;
+		command = "Failed";
+	}
+
+	cout << "Command: " << command << endl;
+
+	return command;
 }
 
 // Find rotation for inner blobs ...
@@ -543,11 +590,15 @@ void findAllOnce(){
 void showOutputLoop(){
 	while (true){
 		for (int i = 1; i < 6; i++){
-			line(output, Point(i * 125, 0), Point(i * 125, output.rows), Scalar::all(100), 3);
+			line(output, Point(i * 125, 0), Point(i * 125, output.rows), Scalar::all(20), 3);
 		}
 
 		for (int i = 1; i < 6; i++){
-			line(output, Point(0, (i * 120) - 80), Point(output.cols, (i * 120) - 80), Scalar::all(100), 3);
+			line(output, Point(0, (i * 120) - 80), Point(output.cols, (i * 120) - 80), Scalar::all(20), 3);
+		}
+
+		if (Scanning){
+			rectangle(output, Point(scanStart), Point(scanStop), Scalar::all(60), 2, 8, 0);
 		}
 
 		imshow("Output", output);
@@ -611,4 +662,3 @@ Mat desktopCapture(Mat input)
 
 	return src;
 }
-
