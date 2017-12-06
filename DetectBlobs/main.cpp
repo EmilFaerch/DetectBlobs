@@ -18,10 +18,14 @@ void takeBackground();
 void updateInput();
 void findObjects(string subject);
 string scanCommand();
-//float findRotation(int Frontx, int Fronty, int Originx, int Originy);
 void startServer();
 void clientSendInfo(int PositionX, int PositionY, string object, int rotation);
-void showOutputLoop(); // -----------
+void showOutputLoop(); 
+void buttonScan();
+void setButtonCoords();
+
+// Threads for sending Ship info to client
+thread t1, t2, t3, t4, t5, t6;
 
 /* NETWORKING */
 sf::IpAddress myIP = "127.0.0.1";
@@ -30,58 +34,45 @@ sf::TcpListener listener;
 sf::TcpSocket someSocket;
 bool listening = true, connected = false;
 
-// Threads for sending Ship info to client
-thread t1, t2, t3, t4, t5, t6;
-
 /* Materials */
-Mat input, background, blobs, output, temp1, temp2;
-/* No more template matching ------------
-Mat p1_ship = imread("p1_ship.PNG", 0); 
-Mat p1_sq1 = imread("p1_sq1.PNG", 0);
-Mat p1_sq2 = imread("p1_sq2.PNG", 0);
+Mat input, background, blobs, output;
 
-Mat p2_ship = imread("p2_ship.PNG", 0);
-Mat p2_sq1 = imread("p2_sq1.PNG", 0);
-Mat p2_sq2 = imread("p2_sq2.PNG", 0);
-
-double team1_minMatchValue = 0.75;
-double team2_minMatchValue = 0.7;
-double bestMatch = 0;
---------------------------------------- */
-
+// Grid Area for Unity Offset --------------------------------------------
+// X
 int areaX1 = 250, areaX2 = 375, areaX3 = 0, areaX4 = 500, areaX5 = 625;
 int offX1 = -160, offX2 = -80, offX3 = 0, offX4 = 75, offX5 = 140;
-
+// Y
 int areaY1 = 160, areaY2 = 280, areaY3 = 400, areaY4 = 520, areaY5 = 625;
 int offY1 = -120, offY2 = -90, offY3 = -25, offY4 = 85, offY5 = 140;
+// -------------------------------------------------------------------------
 
+// Object features; only the squads have circularity, cause we use area for the ships
 int squadArea = 2500; // BLOBs above this Area are Ships
-
-//double p1_shipCircMin = 0.4, p1_shipCircMax = 0.5;
 double p1_sq1CircMin = 0.50, p1_sq1CircMax = 0.65;
 double p1_sq2CircMin = 0.80, p1_sq2CircMax = 0.90;
-
-//double p2_shipCircMin = 0.6, p2_shipCircMax = 0.7;
 double p2_sq1CircMin = 0.30, p2_sq1CircMax = 0.45;
 double p2_sq2CircMin = 0.46, p2_sq2CircMax = 0.80;
+// -------------------------------------------------------
 
-bool Scanning = false;
+// Buttons -----------------------------------------------------------
+int offsetX = 30; int btnLength = 40;
+Point scanStart, scanStop; bool scanEnabled = false;
+Point btnLeftStart, btnLeftStop;  bool leftEnabled = false;
+Point btnRightStart, btnRightStop;  bool rightEnabled = false;
+Point btnConfirmStart, btnConfirmStop;  bool confirmEnabled = false;
+Point btnCancelStart, btnCancelStop;  bool cancelEnabled = false;
+// --------------------------------------------------------------------
 
-Point scanStart, scanStop;
+bool player1 = true;
 
 int main(int, char)
 {
-	// Scanning = true; // Used to display the Scanning Area on 'output' image
-	scanStart.x = 30; scanStart.y = 450; scanStop.x = scanStart.x + 80; scanStop.y = scanStart.y + 80;
+	takeBackground();
+	setButtonCoords();
 
-	 takeBackground();
-	 output = Mat::zeros(background.rows, background.cols, CV_8UC1);
-	 blobs = Mat::zeros(background.rows, background.cols, CV_8UC1);
+	output = Mat::zeros(background.rows, background.cols, CV_8UC1);
+	blobs = Mat::zeros(background.rows, background.cols, CV_8UC1);
 
-	/* ---------------- TESTING PURPOSES ---------------- */
-//	input = imread("input image.PNG", 0);
-//	input.copyTo(output);
-	/* ---------------- TESTING PURPOSES ---------------- */
 
 	thread threadOutput(showOutputLoop);
 	thread updateImage(updateInput);
@@ -90,8 +81,8 @@ int main(int, char)
 	waitKey(0); // Needed for multithreading, so the program doesn't close / crash (on exit)
 
 	serverConnection.join();
-	updateImage.join();
 	threadOutput.join();
+	updateImage.join();
 
 	return 0;
 }
@@ -109,7 +100,14 @@ void takeBackground(){
 }
 
 void updateInput(){
-		//input = imread("input image.png", 0);
+	//input = imread("input image.png", 0);
+	//imwrite("input image.png", input);
+
+	//cout << "Done updating input picture!" << endl;
+
+	while (true){
+		waitKey(1000);
+
 		input = desktopCapture(input);
 		cvtColor(input, input, CV_RGB2GRAY);
 
@@ -125,21 +123,13 @@ void updateInput(){
 		input.copyTo(output);
 		input.copyTo(blobs);
 
-		//	imwrite("input image.png", input);
-
-		cout << "Done updating input picture!" << endl;
+		buttonScan();
+	}
 }
 
 void findObjects(string subject){
 
 	cout << subject << endl;
-
-	if (subject == "Server request"){
-		clientSendInfo(0, 0, "Request start", 0);
-
-		cout << "Updating input picture ..." << endl;
-		updateInput();
-	}
 
 	bool usingT1 = false, usingT2 = false, usingT3 = false, usingT4 = false, usingT5 = false, usingT6 = false;
 
@@ -191,8 +181,7 @@ void findObjects(string subject){
 				circle(output, center, 10, Scalar::all(0));
 
 				double boundAreal = float(boundRect[i].height) * float(boundRect[i].width);
-
-				
+								
 				// P1 OBJECTS
 				if (convex && squadArea < contArea){
 					if (!usingT1){
@@ -201,39 +190,6 @@ void findObjects(string subject){
 							
 							t1 = thread(clientSendInfo, unityX, unityY, "P1_Ship", 0);
 							usingT1 = true;
-
-							// Find inner blob for rotation purposes ....
-							/*
-							temp1 = Mat::zeros(boundRect[i].height, boundRect[i].width, CV_8UC1);
-
-							for (int y = boundRect[i].y; y < boundRect[i].y + boundRect[i].height; y++){
-								for (int x = boundRect[i].x; x < boundRect[i].x + boundRect[i].width; x++){
-									temp1.at<uchar>(y - boundRect[i].y, x - boundRect[i].x) = input.at<uchar>(y, x);
-								}
-							}
-
-							vector<vector<Point> > directionBlob;
-							vector<Vec4i> subHierarchy;
-							findContours(temp1, directionBlob, subHierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
-
-							if (0 < directionBlob.size()){
-								vector<Rect> boundBlob(directionBlob.size());
-
-
-								Point blobCenter;
-								blobCenter.x = boundBlob[0].x + (boundBlob[0].width / 2);
-								blobCenter.y = boundBlob[0].y + (boundBlob[0].height / 2);
-
-								int rotation = findRotation(blobCenter.x, blobCenter.y, (unityX - boundRect[i].width / 2), unityY + boundRect[i].height / 2);
-
-								t1 = thread(clientSendInfo, unityX, unityY, "P1_Ship", rotation);
-								usingT1 = true;
-							}
-							else
-							{
-								cout << "lort" << endl;
-							}
-							*/
 						}
 						else
 						{
@@ -282,36 +238,6 @@ void findObjects(string subject){
 						
 						t4 = thread(clientSendInfo, unityX, unityY, "P2_Ship", 0);
 						usingT4 = true;
-
-						// Find inner Blob for rotation purposes...
-						/*
-						temp2 = Mat::zeros(boundRect[i].height, boundRect[i].width, CV_8UC1);
-
-						for (int y = boundRect[i].y; y < boundRect[i].y + boundRect[i].height; y++){
-							for (int x = boundRect[i].x; x < boundRect[i].x + boundRect[i].width; x++){
-								temp2.at<uchar>(y - boundRect[i].y, x - boundRect[i].x) = input.at<uchar>(y, x);
-							}
-						}
-
-						vector<vector<Point> > directionBlob;
-						vector<Vec4i> subHierarchy;
-						findContours(temp2, directionBlob, subHierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
-
-						if (0 < directionBlob.size()){
-							vector<Rect> boundBlob(directionBlob.size());
-
-
-							Point blobCenter;
-							blobCenter.x = boundBlob[0].x + (boundBlob[0].width / 2);
-							blobCenter.y = boundBlob[0].y + (boundBlob[0].height / 2);
-
-							t4 = thread(clientSendInfo, unityX, unityY, "P2_Ship", findRotation(blobCenter.x, blobCenter.y, (unityX - boundRect[i].width / 2), unityY + boundRect[i].height / 2));
-							usingT4 = true;
-						}
-						else
-						{
-							cout << "BS" << endl;
-						}*/
 					}
 					else
 					{
@@ -366,8 +292,6 @@ void findObjects(string subject){
 				
 				cout << "Circularity: " << circularity << " Blob Area : " << contArea << " - Hull Area : " 
 					<< hullArea << " - Ratio : " << convexRatio << " - Convex: " << convex << endl;
-
-				//Sleep(50);
 			}
 			else
 			{
@@ -377,7 +301,7 @@ void findObjects(string subject){
 			cout << " - " << endl; // To clearly seperate the entries in the console = better overview
 		}
 
-			cout << "For loop ended!" << endl; // Debugging ...
+			cout << "For loop ended!" << endl;												// Debugging ...
 			cout << usingT1 << usingT2 << usingT3 << usingT4 << usingT5 << usingT6 << endl; // ... purposes
 
 			if (usingT1) { t1.join(); }
@@ -412,6 +336,7 @@ void startServer(){
 		cout << "Client connected!" << endl;
 		connected = true;
 		someSocket.setBlocking(false);
+
 		while (connected){
 				listener.setBlocking(false); // Prøver at receive hele tiden // HELE DET HER VAR KOMMENTERET UD
 				someSocket.receive(buffer, sizeof(buffer), received);
@@ -423,11 +348,68 @@ void startServer(){
 					if (msg.substr(0, 7) == "Update!") findObjects("Server request"); //  data fra packets osv, det er lidt kompliceret fra C# til C++
 					
 					// og "Scan!" har 5, så vi gør det samme
-					else if (msg.substr(0, 5) == "Scan!") clientSendInfo(0, 0, "Scan " + scanCommand(), 0);
+					else if (msg.substr(0, 5) == "Scan!") clientSendInfo(0, 0, "Scan " + scanCommand(), 0); // returner "Speed", "Repair", "Concentrate", eller "Failed"
 					
 					else cout << "Client: " << msg << endl;
 					received = 0;
 				}
+		}
+	}
+}
+
+void buttonScan(){
+	int minBlobArea = 30;
+
+	vector<vector<Point> > contours;
+	vector<Vec4i> hierarchy;
+
+	Mat scanROI = Mat::zeros(background.rows, btnLength, CV_8UC1);
+
+	// Make sure to run setButtonCoords before this is run
+	for (int y = 0; y < background.rows; y++){
+		for (int x = offsetX; x < offsetX + btnLength; x++){
+			scanROI.at<uchar>(y, x - offsetX) = input.at<uchar>(y, x);
+		}
+	}
+
+	imshow("lort", scanROI);
+
+	findContours(scanROI, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+	if (contours.size() > 0){
+		for (int i = 0; i < contours.size(); i++){
+			int area = contourArea(contours[i]);
+			cout << "#" << i << ": " << area;
+			if (area > minBlobArea){ // Small BLOBs might be created due to "erode/dilate", so we make sure they are not counted
+				drawContours(blobs, contours, i, Scalar::all(255), CV_FILLED);
+
+				vector<Rect> boundRect(contours.size());
+				boundRect[i] = boundingRect(Mat(contours[i]));
+
+				Point center;
+				center.x = boundRect[i].x; // +(boundRect[i].width / 2);
+				center.y = boundRect[i].y; // +(boundRect[i].height / 2);
+
+				if (center.x >= 0 && center.x < btnLength){
+					cout << "In button range X" << endl;
+					if (center.y >= btnLeftStart.y && center.y <= btnLeftStop.y){
+						cout << "Left" << endl;
+						//clientSendInfo(0, 0, "Button Left", 0);
+					}
+					else if (center.y >= btnRightStart.y && center.y <= btnRightStop.y){
+						cout << "Right" << endl;
+						//clientSendInfo(0, 0, "Button Right", 0);
+					}
+					else if (center.y >= btnConfirmStart.y && center.y <= btnConfirmStop.y){
+						cout << "Confirm" << endl;
+						//clientSendInfo(0, 0, "Button Confirm", 0);
+					}
+					else if (center.y >= btnCancelStart.y && center.y <= btnCancelStop.y){
+						cout << "Cancel" << endl;
+						//clientSendInfo(0, 0, "Button Cancel", 0);
+					}
+				}
+			}
 		}
 	}
 }
@@ -457,13 +439,12 @@ string scanCommand(){
 	if (contours.size() > 0){
 		for (int i = 0; i < contours.size(); i++){
 		
-			if (contourArea(contours[i]) > minBlobArea){ // Small BLOBs might be created due to "erode/dilate", så we make sure they are not counted
+			if (contourArea(contours[i]) > minBlobArea){ // Small BLOBs might be created due to "erode/dilate", so we make sure they are not counted
 				foundBlobs++;
 				drawContours(blobs, contours, i, Scalar::all(255), CV_FILLED);
 			}
 		}
 		
-		// Incremented by one because the paper will count as a blob as well!
 		if (foundBlobs == 1) command = "Speed";
 		else if (foundBlobs == 2) command = "Repair";
 		else if (foundBlobs == 3) command = "Concentrate";
@@ -479,31 +460,6 @@ string scanCommand(){
 
 	return command;
 }
-
-// Find rotation for inner blobs ...
-/*
-float findRotation(int Frontx, int Fronty, int Originx, int Originy)
-{
-	float angle;
-
-	int RightAnglex = Frontx;
-	int RightAngley = Originy;
-
-	int a;
-	int b;
-	float c;
-
-	a = Frontx - Originx;
-	b = Originy - Fronty;
-
-	c = sqrt(a*a + b*b);
-
-
-	angle = asin(b / c);
-
-	return angle;
-}
-*/
 
 void clientSendInfo(int PositionX, int PositionY, string object, int rotation) {
 	string text;
@@ -524,82 +480,64 @@ void clientSendInfo(int PositionX, int PositionY, string object, int rotation) {
 	}
 }
 
-// For template matching; not used anymore
-/*
-void findObject(Mat objTemplate, string name, double rotation, int team){
-	double minMatchValue = team1_minMatchValue;
-		if (team == 2) minMatchValue = team2_minMatchValue;
+void setButtonCoords(){
+	// Y-values don't change
 
-	Mat result;
-	Mat temp; objTemplate.copyTo(temp);
+	scanStart.y = 450;
+	btnLeftStart.y = btnLength * 2;
+	btnRightStart.y = offsetX * 2 + btnLength * 3;
+	btnConfirmStart.y = offsetX * 4 + btnLength * 4;
+	btnCancelStart.y = offsetX * 5 + btnLength * 5;
 
-	if (rotation != 0){
-		Point2f tempCenter(temp.cols / 2.0, temp.rows / 2.0);
-		Mat rot = cv::getRotationMatrix2D(tempCenter, rotation, 0.9);
-		warpAffine(temp, temp, rot, temp.size());
+	scanStop.y = scanStart.y + (btnLength * 2);
+	btnLeftStop.y = btnLeftStart.y + btnLength;
+	btnRightStop.y = btnRightStart.y + btnLength;
+	btnConfirmStop.y = btnConfirmStart.y + btnLength;
+	btnCancelStop.y = btnCancelStart.y + btnLength;
+
+	if (player1){ // Left side of the table
+		scanStart.x = offsetX;
+		btnLeftStart.x = offsetX;		
+		btnRightStart.x = offsetX;		
+		btnConfirmStart.x = offsetX;	
+		btnCancelStart.x = offsetX;		
 	}
-
-	matchTemplate(input, temp, result, 5);
-
-	double minVal; double maxVal; Point minLoc; Point maxLoc; Point matchLoc;
-
-	minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
-
-	matchLoc = maxLoc;
-
-	if (maxVal > minMatchValue){
-
-		rectangle(output, matchLoc, Point(matchLoc.x + temp.cols, matchLoc.y + temp.rows), Scalar::all(255), 2, 8, 0);
-		putText(output, name, Point(matchLoc.x + temp.cols + 5, matchLoc.y + temp.rows - 5), 1, 1, Scalar(255, 0, 0, 255));
-
-		cout << name + " (" + to_string(maxVal) + " percent match) found at: " + to_string(matchLoc.x) + ", " + to_string(matchLoc.y) << " - rotation: " << rotation << endl;
-	}
-	else
+	else // Right side of the table
 	{
-		//	cout << "Not found where Rotation = " << rotation << " - Best match: " << maxVal << " - temp.size: " << temp.size() << endl;
+		scanStart.x = background.cols - offsetX;
 
-		if (rotation < 360){
-			rotation += 1;
-			findObject(objTemplate, name, rotation, team);
-		}
-		else
-		{
-			cout << "Did not find a match for " + name + "."<< endl;
-		}
+		btnLeftStart.x = background.cols - offsetX - btnLength;	
+		btnRightStart.x = background.cols - offsetX - btnLength;
+		btnConfirmStart.x = background.cols - offsetX - btnLength;
+		btnCancelStart.x = background.cols - offsetX - btnLength;
 	}
+
+	// The _Start.x coordinates determine where the _Stop.x coordinates are, no special calculation needed
+	scanStop.x = scanStart.x + (btnLength * 2);
+	btnLeftStop.x = btnLeftStart.x + btnLength;
+	btnRightStop.x = btnRightStart.x + btnLength;
+	btnConfirmStop.x = btnConfirmStart.x + btnLength;
+	btnCancelStop.x = btnCancelStart.x + btnLength;
 }
-
-
-void findAllOnce(){
-	bestMatch = 0;
-	findObject(p1_ship, "P1 Ship", 0, 1);
-	bestMatch = 0;
-	findObject(p1_sq1, "P1 SQ1", 0, 1);
-	bestMatch = 0;
-	findObject(p1_sq2, "P1 SQ2", 0, 1);
-
-	bestMatch = 0;
-	findObject(p2_ship, "P2 Ship", 0, 2);
-	bestMatch = 0;
-	findObject(p2_sq1, "P2 SQ1", 0, 2);
-	bestMatch = 0;
-	findObject(p2_sq2, "P2 SQ2", 0, 2);
-}
-*/
 
 void showOutputLoop(){
 	while (true){
-		for (int i = 1; i < 6; i++){
+
+		/*for (int i = 1; i < 6; i++){
 			line(output, Point(i * 125, 0), Point(i * 125, output.rows), Scalar::all(20), 3);
 		}
 
 		for (int i = 1; i < 6; i++){
 			line(output, Point(0, (i * 120) - 80), Point(output.cols, (i * 120) - 80), Scalar::all(20), 3);
-		}
-
-		if (Scanning){
-			rectangle(output, Point(scanStart), Point(scanStop), Scalar::all(60), 2, 8, 0);
-		}
+		}*/
+		
+		rectangle(output, Point(scanStart), Point(scanStop), Scalar::all(60), 2, 8, 0);
+		rectangle(output, Point(btnMoveStart), Point(btnMoveStop), Scalar::all(60), 2, 8, 0);
+		rectangle(output, Point(btnLeftStart), Point(btnLeftStop), Scalar::all(60), 2, 8, 0);
+		rectangle(output, Point(btnRightStart), Point(btnRightStop), Scalar::all(60), 2, 8, 0);
+		rectangle(output, Point(btnShootStart), Point(btnShootStop), Scalar::all(60), 2, 8, 0);
+		rectangle(output, Point(btnCancelStart), Point(btnCancelStop), Scalar::all(60), 2, 8, 0);
+		rectangle(output, Point(btnConfirmStart), Point(btnConfirmStop), Scalar::all(60), 2, 8, 0);
 
 		imshow("Output", output);
 		if (waitKey(30) > 0) break;
@@ -662,3 +600,66 @@ Mat desktopCapture(Mat input)
 
 	return src;
 }
+
+// For template matching; not used anymore
+/*
+void findObject(Mat objTemplate, string name, double rotation, int team){
+double minMatchValue = team1_minMatchValue;
+if (team == 2) minMatchValue = team2_minMatchValue;
+
+Mat result;
+Mat temp; objTemplate.copyTo(temp);
+
+if (rotation != 0){
+Point2f tempCenter(temp.cols / 2.0, temp.rows / 2.0);
+Mat rot = cv::getRotationMatrix2D(tempCenter, rotation, 0.9);
+warpAffine(temp, temp, rot, temp.size());
+}
+
+matchTemplate(input, temp, result, 5);
+
+double minVal; double maxVal; Point minLoc; Point maxLoc; Point matchLoc;
+
+minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
+
+matchLoc = maxLoc;
+
+if (maxVal > minMatchValue){
+
+rectangle(output, matchLoc, Point(matchLoc.x + temp.cols, matchLoc.y + temp.rows), Scalar::all(255), 2, 8, 0);
+putText(output, name, Point(matchLoc.x + temp.cols + 5, matchLoc.y + temp.rows - 5), 1, 1, Scalar(255, 0, 0, 255));
+
+cout << name + " (" + to_string(maxVal) + " percent match) found at: " + to_string(matchLoc.x) + ", " + to_string(matchLoc.y) << " - rotation: " << rotation << endl;
+}
+else
+{
+//	cout << "Not found where Rotation = " << rotation << " - Best match: " << maxVal << " - temp.size: " << temp.size() << endl;
+
+if (rotation < 360){
+rotation += 1;
+findObject(objTemplate, name, rotation, team);
+}
+else
+{
+cout << "Did not find a match for " + name + "."<< endl;
+}
+}
+}
+
+
+void findAllOnce(){
+bestMatch = 0;
+findObject(p1_ship, "P1 Ship", 0, 1);
+bestMatch = 0;
+findObject(p1_sq1, "P1 SQ1", 0, 1);
+bestMatch = 0;
+findObject(p1_sq2, "P1 SQ2", 0, 1);
+
+bestMatch = 0;
+findObject(p2_ship, "P2 Ship", 0, 2);
+bestMatch = 0;
+findObject(p2_sq1, "P2 SQ1", 0, 2);
+bestMatch = 0;
+findObject(p2_sq2, "P2 SQ2", 0, 2);
+}
+*/
