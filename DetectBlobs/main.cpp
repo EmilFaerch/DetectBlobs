@@ -19,13 +19,14 @@ void updateInput();
 void findObjects(string subject);
 string scanCommand();
 void startServer();
+bool clientConnected();
 void clientSendInfo(int PositionX, int PositionY, string object, int rotation);
 void showOutputLoop(); 
 void buttonScan();
 void setButtonCoords();
 
 // Threads for sending Ship info to client
-thread t1, t2, t3, t4, t5, t6;
+thread threadSearch, t1, t2, t3, t4, t5, t6;
 
 /* NETWORKING */
 sf::IpAddress myIP = "127.0.0.1";
@@ -55,7 +56,7 @@ double p2_sq2CircMin = 0.46, p2_sq2CircMax = 0.80;
 // -------------------------------------------------------
 
 // Buttons -----------------------------------------------------------
-int offsetX = 30; int btnLength = 40;
+int offsetX = 30; int scanY = 450; int btnLength = 60;
 Point scanStart, scanStop; bool scanEnabled = false;
 Point btnLeftStart, btnLeftStop;  bool leftEnabled = false;
 Point btnRightStart, btnRightStop;  bool rightEnabled = false;
@@ -71,32 +72,32 @@ int main(int, char)
 	setButtonCoords();
 
 	output = Mat::zeros(background.rows, background.cols, CV_8UC1);
-	blobs = Mat::zeros(background.rows, background.cols, CV_8UC1);
+	blobs = Mat::zeros(background.rows, background.cols - ((offsetX + btnLength) * 2), CV_8UC1);
 
-
-	thread threadOutput(showOutputLoop);
-	thread updateImage(updateInput);
 	thread serverConnection(startServer);
+	thread updateImage(updateInput);
+	thread threadOutput(showOutputLoop);
 
 	waitKey(0); // Needed for multithreading, so the program doesn't close / crash (on exit)
 
 	serverConnection.join();
-	threadOutput.join();
 	updateImage.join();
+	threadOutput.join();
+	threadSearch.join();
 
 	return 0;
 }
 
 void takeBackground(){
-	background = imread("bg.PNG", 0);
-	//Sleep(2000);
-	//background = desktopCapture(background);
-	//cvtColor(background, background, CV_RGB2GRAY);
-	//GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
+//	background = imread("bg.PNG", 0);
+	Sleep(2000);
+	background = desktopCapture(background);
+	cvtColor(background, background, CV_RGB2GRAY);
+	GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
 
-	//imwrite("bg.PNG", background);
-	//imshow("[BG] Press Space to continue", background);
-	//waitKey(0);
+	imwrite("bg.PNG", background);
+	imshow("[BG] Press Space to continue", background);
+	waitKey(0);
 }
 
 void updateInput(){
@@ -121,13 +122,24 @@ void updateInput(){
 		threshold(input, input, 15, 255, THRESH_OTSU);
 
 		input.copyTo(output);
-		input.copyTo(blobs);
+
+		int val = offsetX + btnLength;
+		
+		for (int y = 0; y < blobs.rows; y++){
+			for (int x = val; x < blobs.cols; x++){
+				blobs.at<uchar>(y, x - val) = input.at<uchar>(y, x);
+			}
+		}
+
+		imshow("Blobs", blobs);
 
 		buttonScan();
 	}
 }
 
 void findObjects(string subject){
+
+	if (!clientConnected) return; // Avoid recursion if we're not connected
 
 	cout << subject << endl;
 
@@ -156,8 +168,6 @@ void findObjects(string subject){
 
 				if (convexRatio >= 0.9) convex = true;
 
-				cout << " - " << endl;
-
 				Point center;
 				center.x = boundRect[i].x + (boundRect[i].width / 2);
 				center.y = boundRect[i].y + (boundRect[i].height / 2);
@@ -181,6 +191,8 @@ void findObjects(string subject){
 				circle(output, center, 10, Scalar::all(0));
 
 				double boundAreal = float(boundRect[i].height) * float(boundRect[i].width);
+
+				cout << " - " << endl;
 								
 				// P1 OBJECTS
 				if (convex && squadArea < contArea){
@@ -293,16 +305,12 @@ void findObjects(string subject){
 				cout << "Circularity: " << circularity << " Blob Area : " << contArea << " - Hull Area : " 
 					<< hullArea << " - Ratio : " << convexRatio << " - Convex: " << convex << endl;
 			}
-			else
-			{
-				cout << "Skipping small blob ..." << endl;
-			}
 
 			cout << " - " << endl; // To clearly seperate the entries in the console = better overview
 		}
 
-			cout << "For loop ended!" << endl;												// Debugging ...
-			cout << usingT1 << usingT2 << usingT3 << usingT4 << usingT5 << usingT6 << endl; // ... purposes
+//			cout << "For loop ended!" << endl;												// Debugging ...
+//			cout << usingT1 << usingT2 << usingT3 << usingT4 << usingT5 << usingT6 << endl; // ... purposes
 
 			if (usingT1) { t1.join(); }
 			if (usingT2) { t2.join(); }
@@ -317,28 +325,31 @@ void findObjects(string subject){
 		return;
 	}
 
-	if (subject == "Server request"){
-		cout << "Request done!" << endl;
-		clientSendInfo(0, 0, "Request done", 0);
-	}
+	waitKey(1000);
+	findObjects("Recursion"); // Call itself again to create a Loop
+
+	//if (subject == "Server request"){
+	//	cout << "Request done!" << endl;
+	//	clientSendInfo(0, 0, "Request done", 0);
+	//}
 }
 
 void startServer(){
-	char buffer[2000];
+	char buffer[10000];
 	size_t received;
 
-	listener.listen(port, myIP);
-
 	while (listening){
+		listener.listen(port, myIP);
 		cout << "Waiting for client ... " << endl;
 		listener.setBlocking(true);	// Går først videre når den connecter/receiver
 		listener.accept(someSocket);
 		cout << "Client connected!" << endl;
 		connected = true;
-		someSocket.setBlocking(false);
+		someSocket.setBlocking(false); // Prøver at receive hele tiden
+		threadSearch = thread(findObjects, "First Call");
 
 		while (connected){
-				listener.setBlocking(false); // Prøver at receive hele tiden // HELE DET HER VAR KOMMENTERET UD
+		//	listener.setBlocking(true); // added det her
 				someSocket.receive(buffer, sizeof(buffer), received);
 
 				if (received > 0){
@@ -346,19 +357,35 @@ void startServer(){
 
 					// 0 - 7 er fixed fordi vi ved at "Update!" har syv bogstaver, og vi gør det for at filtrere noise;
 					if (msg.substr(0, 7) == "Update!") findObjects("Server request"); //  data fra packets osv, det er lidt kompliceret fra C# til C++
-					
-					// og "Scan!" har 5, så vi gør det samme
-					else if (msg.substr(0, 5) == "Scan!") clientSendInfo(0, 0, "Scan " + scanCommand(), 0); // returner "Speed", "Repair", "Concentrate", eller "Failed"
-					
+
 					else cout << "Client: " << msg << endl;
+
+
 					received = 0;
-				}
+			}
+				/*if (!clientConnected()){
+					cout << "No client connected." << endl;
+				}*/
 		}
 	}
 }
 
+bool clientConnected(){
+	if (someSocket.getRemoteAddress() == "None" || someSocket.getRemoteAddress() == "0.0.0.0"){
+		connected = false;
+		someSocket.disconnect();
+
+		cout << "#--- No client connected ---#" << endl;
+		return false;
+	}
+	else
+	{
+		return true;
+	}
+}
+
 void buttonScan(){
-	int minBlobArea = 30;
+	int minBlobArea = 100;
 
 	vector<vector<Point> > contours;
 	vector<Vec4i> hierarchy;
@@ -372,14 +399,11 @@ void buttonScan(){
 		}
 	}
 
-	imshow("lort", scanROI);
-
 	findContours(scanROI, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
 
 	if (contours.size() > 0){
 		for (int i = 0; i < contours.size(); i++){
 			int area = contourArea(contours[i]);
-			cout << "#" << i << ": " << area;
 			if (area > minBlobArea){ // Small BLOBs might be created due to "erode/dilate", so we make sure they are not counted
 				drawContours(blobs, contours, i, Scalar::all(255), CV_FILLED);
 
@@ -387,27 +411,28 @@ void buttonScan(){
 				boundRect[i] = boundingRect(Mat(contours[i]));
 
 				Point center;
-				center.x = boundRect[i].x; // +(boundRect[i].width / 2);
-				center.y = boundRect[i].y; // +(boundRect[i].height / 2);
+				center.x = boundRect[i].x;
+				center.y = boundRect[i].y;
 
-				if (center.x >= 0 && center.x < btnLength){
-					cout << "In button range X" << endl;
-					if (center.y >= btnLeftStart.y && center.y <= btnLeftStop.y){
-						cout << "Left" << endl;
-						//clientSendInfo(0, 0, "Button Left", 0);
-					}
-					else if (center.y >= btnRightStart.y && center.y <= btnRightStop.y){
-						cout << "Right" << endl;
-						//clientSendInfo(0, 0, "Button Right", 0);
-					}
-					else if (center.y >= btnConfirmStart.y && center.y <= btnConfirmStop.y){
-						cout << "Confirm" << endl;
-						//clientSendInfo(0, 0, "Button Confirm", 0);
-					}
-					else if (center.y >= btnCancelStart.y && center.y <= btnCancelStop.y){
-						cout << "Cancel" << endl;
-						//clientSendInfo(0, 0, "Button Cancel", 0);
-					}
+				if (center.y >= btnLeftStart.y && center.y <= btnLeftStop.y){
+					cout << "Button clicked: Left" << endl;
+					clientSendInfo(0, 0, "Button Left", 0);
+				}
+				else if (center.y >= btnRightStart.y && center.y <= btnRightStop.y){
+					cout << "Button clicked: Right" << endl;
+					clientSendInfo(0, 0, "Button Right", 0);
+				}
+				else if (center.y >= btnConfirmStart.y && center.y <= btnConfirmStop.y){
+					cout << "Button clicked: Confirm" << endl;
+					clientSendInfo(0, 0, "Button Confirm", 0);
+				}
+				else if (center.y >= btnCancelStart.y && center.y <= btnCancelStop.y){
+					cout << "Button clicked: Cancel" << endl;
+					clientSendInfo(0, 0, "Button Cancel", 0);
+				}
+				else if (center.y >= scanStart.y && center.y <= scanStop.y){
+					cout << "Scan recognized ..." << endl;
+					clientSendInfo(0, 0, "Scan " + scanCommand(), 0);
 				}
 			}
 		}
@@ -429,8 +454,6 @@ string scanCommand(){
 			scanROI.at<uchar>(y - scanStart.y, x - scanStart.x) = input.at<uchar>(y, x);
 		}
 	}
-
-	imshow("ROI", scanROI);
 
 	findContours(scanROI, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
 
@@ -463,38 +486,35 @@ string scanCommand(){
 
 void clientSendInfo(int PositionX, int PositionY, string object, int rotation) {
 	string text;
-
 	string posX = to_string(PositionX);
 	string posY = to_string(PositionY);
 	string direction = to_string(rotation);
-	
-//	someSocket.connect(myIP, port);
 
-	if (someSocket.getRemoteAddress() != "None"){
-		 text = (object + " " + posX + " " + posY + " " + direction);
+	if (clientConnected()){
+		text = (object + " " + posX + " " + posY + " " + direction);
 		someSocket.send(text.c_str(), text.length() + 1);
 	}
 	else
 	{
-		cout << "Couldn't send message to server: " << someSocket.getRemoteAddress() << " - " << someSocket.getRemotePort() << "." << endl;
+		cout << "Client is not connected." << endl;
 	}
 }
 
 void setButtonCoords(){
-	// Y-values don't change
+	// Y-values don't change ...
+	scanStart.y = scanY;
+	btnLeftStart.y = offsetX * 1 + btnLength * 1;
+	btnRightStart.y = offsetX * 2 + btnLength * 2;
+	btnConfirmStart.y = offsetX * 3 + btnLength * 3;
+	btnCancelStart.y = offsetX * 4 + btnLength * 4;
 
-	scanStart.y = 450;
-	btnLeftStart.y = btnLength * 2;
-	btnRightStart.y = offsetX * 2 + btnLength * 3;
-	btnConfirmStart.y = offsetX * 4 + btnLength * 4;
-	btnCancelStart.y = offsetX * 5 + btnLength * 5;
-
-	scanStop.y = scanStart.y + (btnLength * 2);
+	scanStop.y = scanStart.y + btnLength;
 	btnLeftStop.y = btnLeftStart.y + btnLength;
 	btnRightStop.y = btnRightStart.y + btnLength;
 	btnConfirmStop.y = btnConfirmStart.y + btnLength;
 	btnCancelStop.y = btnCancelStart.y + btnLength;
 
+	// ... only the X coordinates do
 	if (player1){ // Left side of the table
 		scanStart.x = offsetX;
 		btnLeftStart.x = offsetX;		
@@ -512,8 +532,8 @@ void setButtonCoords(){
 		btnCancelStart.x = background.cols - offsetX - btnLength;
 	}
 
-	// The _Start.x coordinates determine where the _Stop.x coordinates are, no special calculation needed
-	scanStop.x = scanStart.x + (btnLength * 2);
+	// The _Start.x coordinates determine where the _Stop.x coordinates are, no extra calculation needed
+	scanStop.x = scanStart.x + btnLength;
 	btnLeftStop.x = btnLeftStart.x + btnLength;
 	btnRightStop.x = btnRightStart.x + btnLength;
 	btnConfirmStop.x = btnConfirmStart.x + btnLength;
@@ -526,16 +546,14 @@ void showOutputLoop(){
 		/*for (int i = 1; i < 6; i++){
 			line(output, Point(i * 125, 0), Point(i * 125, output.rows), Scalar::all(20), 3);
 		}
-
+		// ---------- ^ GRID v --------------
 		for (int i = 1; i < 6; i++){
 			line(output, Point(0, (i * 120) - 80), Point(output.cols, (i * 120) - 80), Scalar::all(20), 3);
 		}*/
 		
 		rectangle(output, Point(scanStart), Point(scanStop), Scalar::all(60), 2, 8, 0);
-		rectangle(output, Point(btnMoveStart), Point(btnMoveStop), Scalar::all(60), 2, 8, 0);
 		rectangle(output, Point(btnLeftStart), Point(btnLeftStop), Scalar::all(60), 2, 8, 0);
 		rectangle(output, Point(btnRightStart), Point(btnRightStop), Scalar::all(60), 2, 8, 0);
-		rectangle(output, Point(btnShootStart), Point(btnShootStop), Scalar::all(60), 2, 8, 0);
 		rectangle(output, Point(btnCancelStart), Point(btnCancelStop), Scalar::all(60), 2, 8, 0);
 		rectangle(output, Point(btnConfirmStart), Point(btnConfirmStop), Scalar::all(60), 2, 8, 0);
 
