@@ -50,12 +50,13 @@ int offY1 = -120, offY2 = -90, offY3 = -25, offY4 = 85, offY5 = 140;
 // Object features; only the squads have circularity, cause we use area for the ships
 int squadArea = 2500; // BLOBs above this Area are Ships
 double p1_sq1CircMin = 0.50, p1_sq1CircMax = 0.65;
-double p1_sq2CircMin = 0.80, p1_sq2CircMax = 0.90;
+double p1_sq2CircMin = 0.69, p1_sq2CircMax = 0.90;
 double p2_sq1CircMin = 0.30, p2_sq1CircMax = 0.45;
 double p2_sq2CircMin = 0.46, p2_sq2CircMax = 0.80;
 // -------------------------------------------------------
 
 // Buttons -----------------------------------------------------------
+int blobOffset;
 int offsetX = 30; int scanY = 450; int btnLength = 60;
 Point scanStart, scanStop; bool scanEnabled = false;
 Point btnLeftStart, btnLeftStop;  bool leftEnabled = false;
@@ -72,7 +73,7 @@ int main(int, char)
 	setButtonCoords();
 
 	output = Mat::zeros(background.rows, background.cols, CV_8UC1);
-	blobs = Mat::zeros(background.rows, background.cols - ((offsetX + btnLength) * 2), CV_8UC1);
+	blobs = Mat::zeros(background.rows, background.cols, CV_8UC1);
 
 	thread serverConnection(startServer);
 	thread updateImage(updateInput);
@@ -89,15 +90,15 @@ int main(int, char)
 }
 
 void takeBackground(){
-//	background = imread("bg.PNG", 0);
-	Sleep(2000);
-	background = desktopCapture(background);
-	cvtColor(background, background, CV_RGB2GRAY);
-	GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
+	background = imread("bg.PNG", 0);
+	//Sleep(2000);
+	//background = desktopCapture(background);
+	//cvtColor(background, background, CV_RGB2GRAY);
+	//GaussianBlur(background, background, Size(3, 3), 1.5, 1.5);
 
-	imwrite("bg.PNG", background);
-	imshow("[BG] Press Space to continue", background);
-	waitKey(0);
+	//imwrite("bg.PNG", background);
+	//imshow("[BG] Press Space to continue", background);
+	//waitKey(0);
 }
 
 void updateInput(){
@@ -123,15 +124,11 @@ void updateInput(){
 
 		input.copyTo(output);
 
-		int val = offsetX + btnLength;
-		
 		for (int y = 0; y < blobs.rows; y++){
-			for (int x = val; x < blobs.cols; x++){
-				blobs.at<uchar>(y, x - val) = input.at<uchar>(y, x);
+			for (int x = blobOffset; x < blobs.cols; x++){
+				blobs.at<uchar>(y, x - blobOffset) = input.at<uchar>(y, x);
 			}
 		}
-
-		imshow("Blobs", blobs);
 
 		buttonScan();
 	}
@@ -139,7 +136,7 @@ void updateInput(){
 
 void findObjects(string subject){
 
-	if (!clientConnected) return; // Avoid recursion if we're not connected
+	if (!clientConnected || !connected) return; // Avoid recursion if we're not connected
 
 	cout << subject << endl;
 
@@ -172,7 +169,7 @@ void findObjects(string subject){
 				center.x = boundRect[i].x + (boundRect[i].width / 2);
 				center.y = boundRect[i].y + (boundRect[i].height / 2);
 
-				int unityX, unityY; // Offset coordinates for Unity
+				int unityX = 300, unityY = 300; // Offset coordinates for Unity
 
 				if		(center.x >= areaX5) unityX = center.x + offX5;							// [-|-|-|-|x]
 				else if (center.x > areaX4 && center.x < areaX5) unityX = center.x + offX4;		// [-|-|-|x|-]
@@ -357,6 +354,14 @@ void startServer(){
 
 					// 0 - 7 er fixed fordi vi ved at "Update!" har syv bogstaver, og vi gør det for at filtrere noise;
 					if (msg.substr(0, 7) == "Update!") findObjects("Server request"); //  data fra packets osv, det er lidt kompliceret fra C# til C++
+					// ^ not using Update anymore; real-time baby! (... sort of)
+
+					else if (msg.substr(0, 4) == "Stop"){
+						listener.close();
+						cout << "Stopping listener ..." << endl;
+						connected = false;
+						threadSearch.join();
+					}
 
 					else cout << "Client: " << msg << endl;
 
@@ -394,8 +399,8 @@ void buttonScan(){
 
 	// Make sure to run setButtonCoords before this is run
 	for (int y = 0; y < background.rows; y++){
-		for (int x = offsetX; x < offsetX + btnLength; x++){
-			scanROI.at<uchar>(y, x - offsetX) = input.at<uchar>(y, x);
+		for (int x = scanStart.x; x < scanStart.x + btnLength; x++){
+			scanROI.at<uchar>(y, x - scanStart.x) = input.at<uchar>(y, x);
 		}
 	}
 
@@ -456,8 +461,6 @@ string scanCommand(){
 	}
 
 	findContours(scanROI, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
-
-	cout << "Contours Found: " << to_string(contours.size()) << endl;
 
 	if (contours.size() > 0){
 		for (int i = 0; i < contours.size(); i++){
@@ -524,8 +527,7 @@ void setButtonCoords(){
 	}
 	else // Right side of the table
 	{
-		scanStart.x = background.cols - offsetX;
-
+		scanStart.x = background.cols - offsetX - btnLength;
 		btnLeftStart.x = background.cols - offsetX - btnLength;	
 		btnRightStart.x = background.cols - offsetX - btnLength;
 		btnConfirmStart.x = background.cols - offsetX - btnLength;
@@ -543,13 +545,13 @@ void setButtonCoords(){
 void showOutputLoop(){
 	while (true){
 
-		/*for (int i = 1; i < 6; i++){
-			line(output, Point(i * 125, 0), Point(i * 125, output.rows), Scalar::all(20), 3);
+		for (int i = 1; i < 6; i++){
+			line(output, Point(i * 125, 0), Point(i * 125, output.rows), Scalar::all(100), 3);
 		}
 		// ---------- ^ GRID v --------------
 		for (int i = 1; i < 6; i++){
-			line(output, Point(0, (i * 120) - 80), Point(output.cols, (i * 120) - 80), Scalar::all(20), 3);
-		}*/
+			line(output, Point(0, (i * 120) - 80), Point(output.cols, (i * 120) - 80), Scalar::all(100), 3);
+		}
 		
 		rectangle(output, Point(scanStart), Point(scanStop), Scalar::all(60), 2, 8, 0);
 		rectangle(output, Point(btnLeftStart), Point(btnLeftStop), Scalar::all(60), 2, 8, 0);
